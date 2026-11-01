@@ -440,7 +440,8 @@ test('http hooks install, are recognised as ours, and uninstall cleanly', () => 
   assert.equal(ours.timeout, 120);
   assert.equal(ours.command, undefined);
   // Only allow-listed env vars are ever interpolated into headers.
-  assert.deepEqual(ours.allowedEnvVars, ['TERM_PROGRAM']);
+  assert.deepEqual(ours.allowedEnvVars, ['TERM_PROGRAM', 'CLAUDE_CODE_ENTRYPOINT', 'VSCODE_PID', 'WT_SESSION']);
+  assert.equal(ours.headers['X-Clippy-Entrypoint'], '${CLAUDE_CODE_ENTRYPOINT}');
   assert.equal(
     groupFor(settings, 'Notification', 'idle_prompt').hooks[0].url,
     'http://127.0.0.1:43117/hook/Notification?kind=idle_prompt&source=claude'
@@ -469,4 +470,12 @@ test('an http hook without our marker header is never ours', () => {
   const theirs = { ...hook, headers: {} };
   const settings = { hooks: { Notification: [{ matcher: 'permission_prompt', hooks: [theirs] }] } };
   assert.equal(listInstalled(settings).length, 0);
+});
+
+test('http hooks from before they carried the editor environment ask to be updated', () => {
+  const settings = installHooks({}, 43117, { style: 'http' });
+  for (const group of Object.values(settings.hooks).flat()) {
+    for (const hook of group.hooks) hook.headers = { [HTTP_MARKER_HEADER]: MARKER, 'X-Clippy-Term': '${TERM_PROGRAM}' };
+  }
+  assert.equal(checkDrift(settings, 43117, { style: 'http' }).noTerminalInfo, true);
 });

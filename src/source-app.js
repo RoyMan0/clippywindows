@@ -60,6 +60,8 @@ function guiHostFor(app) {
 const PROGRAM_LABELS = {
   [TERMINAL_APP]: 'Terminal',
   [ITERM_APP]: 'iTerm',
+  vscode: 'VS Code',
+  'Windows Terminal': 'Windows Terminal',
 };
 
 /**

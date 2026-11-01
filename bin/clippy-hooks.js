@@ -133,10 +133,14 @@ function hookCommand(spec, port, source = 'claude') {
 // reads a command hook's stdout, so Windows gets those instead.
 const HTTP_MARKER_HEADER = 'X-Clippy-Hook';
 
-// Environment variables the http hooks may copy into headers. TERM_PROGRAM is
-// the only one the app reads today ("vscode" names the host); anything not
-// listed here is never sent.
-const HTTP_ENV_VARS = ['TERM_PROGRAM'];
+// Environment variables the http hooks may copy into headers — the only way a
+// shell-less hook can say where its session lives. Anything not listed here is
+// never sent, and none of them leaves this machine (the URL is loopback).
+//   TERM_PROGRAM            "vscode" inside VS Code's own terminal
+//   CLAUDE_CODE_ENTRYPOINT  "claude-vscode" for the VS Code extension
+//   VSCODE_PID              the editor whose windows to search
+//   WT_SESSION              set inside Windows Terminal
+const HTTP_ENV_VARS = ['TERM_PROGRAM', 'CLAUDE_CODE_ENTRYPOINT', 'VSCODE_PID', 'WT_SESSION'];
 
 /** Which kind of hook entry this platform gets: 'http' on Windows, else 'command'. */
 function defaultHookStyle(platform = process.platform) {
@@ -161,6 +165,9 @@ function httpHook(spec, port, source = 'claude') {
     headers: {
       [HTTP_MARKER_HEADER]: MARKER,
       'X-Clippy-Term': '${TERM_PROGRAM}',
+      'X-Clippy-Entrypoint': '${CLAUDE_CODE_ENTRYPOINT}',
+      'X-Clippy-Host-Pid': '${VSCODE_PID}',
+      'X-Clippy-Wt': '${WT_SESSION}',
     },
     allowedEnvVars: HTTP_ENV_VARS,
   };
@@ -254,6 +261,7 @@ function collectOurs(settings) {
             matcher: group.matcher || '',
             style: hook.type === 'http' ? 'http' : 'command',
             command: String(hook.type === 'http' ? hook.url : hook.command),
+            headers: hook.type === 'http' ? Object.keys(hook.headers || {}) : [],
           });
         }
       }
@@ -302,8 +310,11 @@ function checkDriftFor(settings, port, specs, style = 'command') {
     wrongPort: installed.some((h) => !h.command.includes(`127.0.0.1:${port}/`)),
     // Older installs don't report which terminal they ran in, so "open the
     // session's window" has nothing to aim at.
-    // (An http hook has no shell to ask for a tty, so it is never short of one.)
-    noTerminalInfo: installed.some((h) => h.style === 'command' && !h.command.includes('X-Clippy-Tty')),
+    // An http hook has no tty to report; what it can carry is the editor's
+    // environment, and the first Windows build didn't send that yet.
+    noTerminalInfo: installed.some((h) =>
+      h.style === 'command' ? !h.command.includes('X-Clippy-Tty') : !h.headers.includes('X-Clippy-Entrypoint')
+    ),
   };
 }
 

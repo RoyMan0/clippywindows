@@ -72,6 +72,7 @@ const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-s
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
 const { createOutbox } = require('./outbox');
 const { createFocusProbe, looksFocused } = require('./frontmost');
+const { winWindows } = require('./win-windows');
 const { describeSource } = require('./source-app');
 const { routingPrompt, parseChoice, routable } = require('./delegate');
 
@@ -1417,12 +1418,14 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
         const appPid = buddy.target?.app?.pid;
         tellBuddy(
           key,
-          appPid && isRunning(appPid)
+          appPid && isRunning(appPid) && process.platform === 'win32'
+            ? `I found “${buddy.name}”'s window but couldn't measure it — is it minimised?`
+            : appPid && isRunning(appPid)
             ? `“${buddy.name}” is running but macOS won't show me its windows. ` +
                 'Check Clippy (Electron) under Privacy & Security → Accessibility — ' +
                 'switching it off and on again fixes a stale one.'
             : "I couldn't find that session's window — is the terminal still open?",
-          { sticky: true, fix: appPid && isRunning(appPid) ? 'accessibility' : null }
+          { sticky: true, fix: appPid && isRunning(appPid) && process.platform === 'darwin' ? 'accessibility' : null }
         );
       }
       return false;
@@ -1567,6 +1570,15 @@ async function sendPromptToTerminal(key, text) {
   const record = tmuxRecordFor(key);
   if (record) return sendToSpawned(buddy, record, prompt);
 
+  // Keystrokes land wherever focus is inside the window. In Windows Terminal
+  // that is the prompt; in VS Code it is just as likely an open file, and the
+  // extension's chat box isn't reachable by keystrokes at all — so on Windows
+  // Clippy only types into terminals it can't mistake for an editor.
+  if (process.platform === 'win32' && tracker.terminalFor(key)?.program === 'vscode') {
+    tellBuddy(key, 'I can’t type into VS Code safely — use “go to VS Code” and reply there.', { sticky: true });
+    return false;
+  }
+
   if (!canDriveWindows()) {
     askForWindowAccess(key);
     return false;
@@ -1589,9 +1601,11 @@ async function sendPromptToTerminal(key, text) {
     console.warn('clippy: could not type into the terminal:', err.message);
     tellBuddy(
       key,
-      `I couldn't type into “${buddy.name}”'s window — macOS may be blocking keystrokes. ` +
-        'Check Clippy (Electron) under Privacy & Security → Accessibility.',
-      { sticky: true, fix: 'accessibility' }
+      process.platform === 'win32'
+        ? `I couldn't type into “${buddy.name}”'s window — Windows may have kept focus elsewhere.`
+        : `I couldn't type into “${buddy.name}”'s window — macOS may be blocking keystrokes. ` +
+            'Check Clippy (Electron) under Privacy & Security → Accessibility.',
+      { sticky: true, fix: process.platform === 'win32' ? null : 'accessibility' }
     );
     return false;
   }
@@ -3901,6 +3915,7 @@ async function lookingAtIt(key) {
   if (tmuxRecordFor(key)) return false;
   const term = tracker.terminalFor(key);
   if (!term) return false;
+  if (process.platform === 'win32') return lookingAtItOnWindows(key, term);
   try {
     // Both at once: which app this session belongs to is a walk up the process
     // table, and it has to be known *before* deciding, or the first hook of a
@@ -3917,6 +3932,26 @@ async function lookingAtIt(key) {
       tty: term.tty || '',
       focusedTty,
     });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Windows: is this session's own window the foreground one? Compared by
+ * window handle, so a second VS Code window on another project doesn't count.
+ * The resolved window is kept on the terminal record, like `appFor` does.
+ */
+async function lookingAtItOnWindows(key, term) {
+  try {
+    const front = await winWindows().front();
+    if (!front || !front.hwnd) return false;
+    const hint = path.basename(tracker.cwdFor(key) || '');
+    if (!term.winTarget || term.winTargetHint !== hint) {
+      term.winTarget = await resolveTarget(term, hint);
+      term.winTargetHint = hint;
+    }
+    return Boolean(term.winTarget && Number(term.winTarget.hwnd) === Number(front.hwnd));
   } catch {
     return false;
   }
@@ -4320,6 +4355,14 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   if (process.platform === 'darwin') app.dock.hide();
+  // The Windows window helper compiles itself on first use, which takes a
+  // second or two; do that now rather than on the first card that needs it.
+  if (process.platform === 'win32') {
+    winWindows()
+      .call('ping')
+      .catch((err) => console.warn('clippy: window helper unavailable:', err.message));
+    app.on('will-quit', () => winWindows().stop());
+  }
 
   // Custom buddies used to be written inside the app bundle, where every
   // update deleted them. Carry whatever is still there into userData before

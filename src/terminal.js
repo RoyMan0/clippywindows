@@ -16,6 +16,7 @@
  */
 
 const { execFile } = require('node:child_process');
+const { winWindows, pickWindow } = require('./win-windows');
 
 const OSASCRIPT_TIMEOUT_MS = 5000;
 
@@ -25,9 +26,24 @@ function terminalFromHeaders(headers = {}) {
     const v = headers[k];
     return typeof v === 'string' ? v.trim() : '';
   };
-  const program = get('x-clippy-term');
   const tty = get('x-clippy-tty');
   const pid = Number(get('x-clippy-pid')) || 0;
+  // Windows' http hooks (see bin/clippy-hooks.js) have no shell to ask for a
+  // tty or a parent pid. What they can carry is the environment Claude Code
+  // runs in: the entrypoint says "this is the VS Code extension", VSCODE_PID
+  // is the editor whose windows to look through, WT_SESSION means Windows
+  // Terminal. The marker header alone is enough to say "a window exists, go
+  // and find it by its title".
+  if (get('x-clippy-hook')) {
+    const entrypoint = get('x-clippy-entrypoint');
+    const hostPid = Number(get('x-clippy-host-pid')) || 0;
+    const program =
+      entrypoint === 'claude-vscode'
+        ? 'vscode'
+        : get('x-clippy-term') || (get('x-clippy-wt') ? 'Windows Terminal' : '');
+    return { program, tty: '', pid: 0, hostPid, entrypoint };
+  }
+  const program = get('x-clippy-term');
   if (!program && !tty && !pid) return null;
   // ps prints `s004`-style short names; AppleScript wants the device path.
   const device = tty && tty !== '??' ? (tty.startsWith('/dev/') ? tty : `/dev/tty${tty.replace(/^tty/, '')}`) : '';
@@ -316,6 +332,41 @@ function promptPosition(bounds, w, h, workArea, { inset = 18, prompt = 62 } = {}
   };
 }
 
+/* ---------------- Windows ---------------- */
+
+/**
+ * Find a Windows session's window by app and title (see win-windows.js). The
+ * target carries the hwnd every later call works with, and an `app.pid` so the
+ * perch can tell "minimised" from "the editor quit".
+ */
+async function resolveWindowsTarget(term, hint = '') {
+  const win = pickWindow(await winWindows().list(), term, hint);
+  if (!win) return null;
+  return {
+    program: term.program,
+    tty: '',
+    hint,
+    hwnd: win.hwnd,
+    app: { pid: win.pid, name: win.proc, bundle: '', bundleId: '' },
+  };
+}
+
+/**
+ * Physical pixels (what Win32 reports) to Electron's DIPs (what every window
+ * position in the app is written in). Only meaningful inside Electron on
+ * Windows, which is the only place an hwnd target exists.
+ */
+function toDip(bounds) {
+  if (!bounds) return null;
+  try {
+    const { screen } = require('electron');
+    if (screen && typeof screen.screenToDipRect === 'function') return screen.screenToDipRect(null, bounds);
+  } catch {
+    // not running under Electron (tests): pixels are as good as it gets
+  }
+  return bounds;
+}
+
 /* ---------------- The bits that actually touch the machine ---------------- */
 
 function run(cmd, args, { timeout = OSASCRIPT_TIMEOUT_MS } = {}) {
@@ -375,6 +426,7 @@ async function appForPid(pid) {
  */
 async function resolveTarget(term, hint = '') {
   if (!term) return null;
+  if (process.platform === 'win32') return resolveWindowsTarget(term, hint);
   const direct = term.tty && (term.program === TERMINAL_APP || term.program === ITERM_APP);
   const app = direct ? null : await appForPid(term.pid);
   if (!direct && !app) return null;
@@ -423,6 +475,10 @@ async function activateApp(target) {
  * @returns {Promise<{bounds: object|null, activated: boolean}>}
  */
 async function revealWindow(target) {
+  if (target?.hwnd) {
+    const { raised, bounds } = (await winWindows().raise(target.hwnd)) || {};
+    return { bounds: toDip(bounds), activated: Boolean(raised) };
+  }
   const activated = await activateApp(target);
   return { bounds: await runWindowScript(target, { reveal: true }), activated };
 }
@@ -450,11 +506,16 @@ end tell`;
 
 /** Type `text` into the frontmost window and submit it. */
 async function typeAndSubmit(text) {
+  if (process.platform === 'win32') {
+    await winWindows().type(text);
+    return;
+  }
   await run('/usr/bin/osascript', ['-e', typeScript(text)]);
 }
 
 /** Where is that window right now? */
 async function windowBounds(target) {
+  if (target?.hwnd) return toDip(await winWindows().bounds(target.hwnd));
   return runWindowScript(target, { reveal: false });
 }
 
