@@ -4347,6 +4347,10 @@ function lockDownNavigation() {
 
 lockDownNavigation();
 
+// Windows only shows toast notifications for an app with a stable identity;
+// without one, Notification.show() quietly does nothing.
+if (process.platform === 'win32') app.setAppUserModelId('dev.aisocratic.clippy');
+
 if (!claimTheMenuBar()) standDown('this copy does not have the menu bar.');
 setInterval(defendTheMenuBar, DEFEND_EVERY_MS).unref?.();
 app.on('second-instance', () => {

@@ -29,3 +29,6 @@ website/
 # Agent-session state (workflow worktrees, per-agent memory) — machine-local
 .claude/worktrees/
 .claude/agent-memory/
+
+# Windows installer build resources (drawn by scripts/package-win.js)
+build/

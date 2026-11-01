@@ -147,3 +147,15 @@ test('off Windows the helper is never started', async () => {
   await assert.rejects(helper.list(), /Windows-only/);
   assert.equal(started, false);
 });
+
+test('the Windows icon is a valid multi-size .ico of PNGs', () => {
+  const { buildIco } = require('../scripts/package-win');
+  const ico = buildIco([16, 256]);
+  assert.equal(ico.readUInt16LE(2), 1);
+  assert.equal(ico.readUInt16LE(4), 2);
+  assert.equal(ico.readUInt8(6), 16);
+  assert.equal(ico.readUInt8(6 + 16), 0); // 256 is written as 0
+  const offset = ico.readUInt32LE(6 + 12);
+  assert.deepEqual([...ico.subarray(offset, offset + 4)], [0x89, 0x50, 0x4e, 0x47]);
+  assert.equal(offset + ico.readUInt32LE(6 + 8), ico.readUInt32LE(6 + 16 + 12));
+});

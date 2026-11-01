@@ -36,6 +36,7 @@
     "make-mobile-icons": "node scripts/make-mobile-icons.js",
     "package": "node scripts/package-app.js",
     "package:release": "node scripts/package-app.js --require-release-signing",
+    "package:win": "node scripts/package-win.js",
     "verify:release": "node scripts/verify-release.js",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",
     "mock-session": "node scripts/mock-session.js",
@@ -51,9 +52,49 @@
     "website": "node website/build.js && open website/index.html"
   },
   "devDependencies": {
-    "electron": "^33.4.11"
+    "electron": "^33.4.11",
+    "electron-builder": "^26.18.0"
   },
   "optionalDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0"
+  },
+  "build": {
+    "appId": "dev.aisocratic.clippy",
+    "productName": "Clippy for Claude Code",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "package.json",
+      "src/**/*",
+      "bin/**/*",
+      "scripts/**/*",
+      "integrations/**/*",
+      "!**/*.test.js",
+      "!node_modules/**/*"
+    ],
+    "asar": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "artifactName": "Clippy-for-Claude-Code-Setup-${version}.${ext}"
+    },
+    "npmRebuild": false
   }
 }
