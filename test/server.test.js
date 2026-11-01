@@ -314,3 +314,22 @@ test('serves /status and 404s everything else', async () => {
     }
   );
 });
+
+test('an http hook (Windows) gets an empty 204 ack, and still gets a decision', async () => {
+  await withServer(
+    (event) => (event === 'PermissionRequest' ? { hookSpecificOutput: { decision: { behavior: 'deny' } } } : undefined),
+    async (base) => {
+      const headers = { 'Content-Type': 'application/json', 'X-Clippy-Hook': '#clippy', 'X-Clippy-Term': 'vscode' };
+      const ack = await raw(base, { path: '/hook/Stop', headers, body: '{}' });
+      assert.equal(ack.status, 204);
+      assert.equal(ack.text, '');
+      const decided = await raw(base, { path: '/hook/PermissionRequest', headers, body: '{}' });
+      assert.equal(decided.status, 200);
+      assert.equal(JSON.parse(decided.text).hookSpecificOutput.decision.behavior, 'deny');
+      // curl hooks keep the old body, which they echo to stdout.
+      const curl = await raw(base, { path: '/hook/Stop', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      assert.equal(curl.status, 200);
+      assert.equal(curl.text, '{"ok":true}');
+    }
+  );
+});

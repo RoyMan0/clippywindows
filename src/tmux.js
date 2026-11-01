@@ -338,7 +338,10 @@ function run(bin, args, { input = null, timeout = TMUX_TIMEOUT_MS } = {}) {
 let tmuxBin = null;
 
 /** The tmux binary, resolved once. Rejects if there isn't one. */
-async function findTmux(env = process.env) {
+async function findTmux(env = process.env, platform = process.platform) {
+  // No tmux on Windows (WSL's lives in another world), so don't go looking
+  // for a login shell that isn't there either.
+  if (platform === 'win32') throw new Error('tmux is not available on Windows');
   if (tmuxBin) return tmuxBin;
   for (const candidate of tmuxCandidates(env)) {
     if (fs.existsSync(candidate)) return (tmuxBin = candidate);

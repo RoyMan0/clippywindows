@@ -192,10 +192,19 @@ function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43
         })
         .then((reply) => {
           if (res.writableEnded || res.destroyed) return; // curl already gave up
+          const decided = reply && typeof reply === 'object';
+          // Claude Code's own http hooks (Windows) validate a JSON body against
+          // the hook output schema, so a plain ack goes back as an empty 204 —
+          // which they read as "success, no decision".
+          if (!decided && req.headers['x-clippy-hook']) {
+            res.writeHead(204);
+            res.end();
+            return;
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           // No reply object -> plain ack. Interactive hooks treat the body as
           // their stdout decision; "{}" / {"ok":true} both mean "no decision".
-          res.end(reply && typeof reply === 'object' ? JSON.stringify(reply) : '{"ok":true}');
+          res.end(decided ? JSON.stringify(reply) : '{"ok":true}');
         });
     });
   });

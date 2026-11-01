@@ -418,3 +418,55 @@ test('installToFiles reports a broken config without clobbering it or the other 
   assert.equal(fs.readFileSync(pathFor('claude'), 'utf8'), '{ not json'); // untouched
   assert.equal(byAgent.codex.ok, true); // the healthy agent still installs
 });
+
+const { httpHook, defaultHookStyle, defaultAgents, HTTP_MARKER_HEADER } = require('../bin/clippy-hooks');
+
+test('Windows gets http hooks, everything else keeps curl commands', () => {
+  assert.equal(defaultHookStyle('win32'), 'http');
+  assert.equal(defaultHookStyle('darwin'), 'command');
+  assert.deepEqual(defaultAgents('win32'), ['claude']);
+});
+
+test('http hooks install, are recognised as ours, and uninstall cleanly', () => {
+  const settings = installHooks(
+    { hooks: { Stop: [{ hooks: [{ type: 'http', url: 'http://example.test/mine' }] }] } },
+    43117,
+    { style: 'http' }
+  );
+  const ours = settings.hooks.PermissionRequest[0].hooks[0];
+  assert.equal(ours.type, 'http');
+  assert.equal(ours.url, 'http://127.0.0.1:43117/hook/PermissionRequest?source=claude');
+  assert.equal(ours.headers[HTTP_MARKER_HEADER], MARKER);
+  assert.equal(ours.timeout, 120);
+  assert.equal(ours.command, undefined);
+  // Only allow-listed env vars are ever interpolated into headers.
+  assert.deepEqual(ours.allowedEnvVars, ['TERM_PROGRAM']);
+  assert.equal(
+    groupFor(settings, 'Notification', 'idle_prompt').hooks[0].url,
+    'http://127.0.0.1:43117/hook/Notification?kind=idle_prompt&source=claude'
+  );
+  assert.equal(listInstalled(settings).length, SPECS.length);
+
+  const fresh = checkDrift(settings, 43117, { style: 'http' });
+  assert.deepEqual(fresh, { installed: true, missing: [], stale: false, wrongPort: false, noTerminalInfo: false });
+  assert.equal(checkDrift(settings, 5000, { style: 'http' }).wrongPort, true);
+
+  uninstallHooks(settings);
+  // The user's own http hook survives; every one of ours is gone.
+  assert.deepEqual(settings.hooks, { Stop: [{ hooks: [{ type: 'http', url: 'http://example.test/mine' }] }] });
+});
+
+test('curl hooks carried over to Windows count as stale, and a reinstall swaps them', () => {
+  const settings = installHooks({}, 43117, { style: 'command' });
+  assert.equal(checkDrift(settings, 43117, { style: 'http' }).stale, true);
+  installHooks(settings, 43117, { style: 'http' });
+  assert.equal(checkDrift(settings, 43117, { style: 'http' }).stale, false);
+  assert.ok(Object.values(settings.hooks).flat().flatMap((g) => g.hooks).every((h) => h.type === 'http'));
+});
+
+test('an http hook without our marker header is never ours', () => {
+  const hook = httpHook(SPECS[0], 43117);
+  const theirs = { ...hook, headers: {} };
+  const settings = { hooks: { Notification: [{ matcher: 'permission_prompt', hooks: [theirs] }] } };
+  assert.equal(listInstalled(settings).length, 0);
+});

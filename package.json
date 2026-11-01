@@ -1,7 +1,7 @@
 {
   "name": "clippy-for-claude",
   "version": "0.3.2",
-  "description": "A Clippy for your Mac that watches Claude Code and Codex sessions and lets you answer them without hunting through terminal tabs",
+  "description": "A Clippy for your Mac or Windows PC that watches Claude Code and Codex sessions and lets you answer them without hunting through terminal tabs",
   "author": "AI Socratic (https://aisocratic.org)",
   "keywords": [
     "claude",
@@ -16,7 +16,8 @@
   "license": "MIT",
   "main": "src/main.js",
   "os": [
-    "darwin"
+    "darwin",
+    "win32"
   ],
   "engines": {
     "node": ">=18.13"

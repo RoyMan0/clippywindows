@@ -107,9 +107,7 @@ const TERM_HEADERS =
   `-H "X-Clippy-Tty: $(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')" `;
 
 function hookCommand(spec, port, source = 'claude') {
-  const kind = spec.event === 'Notification' && spec.matcher ? `?kind=${spec.matcher}` : '';
-  const separator = kind ? '&' : '?';
-  const url = `http://127.0.0.1:${port}/hook/${spec.event}${kind}${separator}source=${source}`;
+  const url = hookUrl(spec, port, source);
   if (spec.mode === 'decide') {
     // Interactive: stdout (the app's JSON response) is the hook decision.
     // --connect-timeout 1: if the Clippy app isn't running, fail in <1s with
@@ -128,9 +126,54 @@ function hookCommand(spec, port, source = 'claude') {
   );
 }
 
+// On Windows, Claude Code runs a command hook through Git Bash when it is
+// installed and PowerShell when it isn't, so one curl line can't be written
+// that works for everyone. Claude Code's own `http` hook type POSTs the same
+// JSON with no shell at all, and reads the response body exactly the way it
+// reads a command hook's stdout, so Windows gets those instead.
+const HTTP_MARKER_HEADER = 'X-Clippy-Hook';
+
+// Environment variables the http hooks may copy into headers. TERM_PROGRAM is
+// the only one the app reads today ("vscode" names the host); anything not
+// listed here is never sent.
+const HTTP_ENV_VARS = ['TERM_PROGRAM'];
+
+/** Which kind of hook entry this platform gets: 'http' on Windows, else 'command'. */
+function defaultHookStyle(platform = process.platform) {
+  return platform === 'win32' ? 'http' : 'command';
+}
+
+function hookUrl(spec, port, source) {
+  const kind = spec.event === 'Notification' && spec.matcher ? `?kind=${spec.matcher}` : '';
+  const separator = kind ? '&' : '?';
+  return `http://127.0.0.1:${port}/hook/${spec.event}${kind}${separator}source=${source}`;
+}
+
+/**
+ * The same hook as `hookCommand`, as a Claude Code `http` hook. A refused
+ * connection (Clippy not running) is a non-blocking error, so the normal
+ * prompt takes over exactly as it does when curl gives up.
+ */
+function httpHook(spec, port, source = 'claude') {
+  return {
+    type: 'http',
+    url: hookUrl(spec, port, source),
+    headers: {
+      [HTTP_MARKER_HEADER]: MARKER,
+      'X-Clippy-Term': '${TERM_PROGRAM}',
+    },
+    allowedEnvVars: HTTP_ENV_VARS,
+  };
+}
+
 function isOurs(hook) {
-  const command = String(hook?.command || '');
-  return hook && hook.type === 'command' &&
+  if (!hook) return false;
+  if (hook.type === 'http') {
+    const marker = hook.headers && hook.headers[HTTP_MARKER_HEADER];
+    return marker === MARKER;
+  }
+  const command = String(hook.command || '');
+  return hook.type === 'command' &&
     (command.includes(MARKER) || command.includes(LEGACY_MARKER));
 }
 
@@ -156,7 +199,7 @@ function uninstallHooks(settings) {
 }
 
 /** Add clippy hooks to a settings object (mutates + returns it). */
-function installHooksFor(settings, port, specs, source) {
+function installHooksFor(settings, port, specs, source, style = 'command') {
   uninstallHooks(settings); // idempotent: replace any previous install
   settings.hooks = settings.hooks || {};
   for (const spec of specs) {
@@ -167,18 +210,19 @@ function installHooksFor(settings, port, specs, source) {
       groups.push(group);
     }
     group.hooks = group.hooks || [];
-    group.hooks.push({
-      type: 'command',
-      command: hookCommand(spec, port, source),
-      timeout: spec.timeout || (spec.mode === 'decide' ? DECIDE_HOOK_TIMEOUT_S : 5),
-    });
+    const timeout = spec.timeout || (spec.mode === 'decide' ? DECIDE_HOOK_TIMEOUT_S : 5);
+    group.hooks.push(
+      style === 'http'
+        ? { ...httpHook(spec, port, source), timeout }
+        : { type: 'command', command: hookCommand(spec, port, source), timeout }
+    );
   }
   return settings;
 }
 
 /** Add Claude Code hooks to ~/.claude/settings.json. */
-function installHooks(settings, port = DEFAULT_PORT) {
-  installHooksFor(settings, port, SPECS, 'claude');
+function installHooks(settings, port = DEFAULT_PORT, { style = defaultHookStyle() } = {}) {
+  installHooksFor(settings, port, SPECS, 'claude', style);
   // Claude Code renders exactly one statusline, so a user's own stays theirs:
   // we only claim the slot when it's empty (uninstallHooks above already
   // cleared a previous install of ours).
@@ -205,7 +249,12 @@ function collectOurs(settings) {
     for (const group of groups || []) {
       for (const hook of group.hooks || []) {
         if (isOurs(hook)) {
-          found.push({ event, matcher: group.matcher || '', command: String(hook.command) });
+          found.push({
+            event,
+            matcher: group.matcher || '',
+            style: hook.type === 'http' ? 'http' : 'command',
+            command: String(hook.type === 'http' ? hook.url : hook.command),
+          });
         }
       }
     }
@@ -225,7 +274,7 @@ function listInstalled(settings) {
  *
  * @returns {{installed: boolean, missing: string[], stale: boolean, wrongPort: boolean, noTerminalInfo: boolean}}
  */
-function checkDriftFor(settings, port, specs) {
+function checkDriftFor(settings, port, specs, style = 'command') {
   const installed = collectOurs(settings);
   if (installed.length === 0) {
     return { installed: false, missing: [], stale: false, wrongPort: false, noTerminalInfo: false };
@@ -243,18 +292,23 @@ function checkDriftFor(settings, port, specs) {
     missing,
     // Hooks this build no longer subscribes to (SessionStart, say) keep firing
     // from an old install until a re-install clears them.
+    // So do hooks of the wrong kind for this machine: curl lines carried over
+    // to Windows, say, where the shell that would run them may not exist.
     stale: installed.some(
-      (h) => !specs.find((spec) => spec.event === h.event && (spec.matcher || '') === h.matcher)
+      (h) =>
+        h.style !== style ||
+        !specs.find((spec) => spec.event === h.event && (spec.matcher || '') === h.matcher)
     ),
     wrongPort: installed.some((h) => !h.command.includes(`127.0.0.1:${port}/`)),
     // Older installs don't report which terminal they ran in, so "open the
     // session's window" has nothing to aim at.
-    noTerminalInfo: installed.some((h) => !h.command.includes('X-Clippy-Tty')),
+    // (An http hook has no shell to ask for a tty, so it is never short of one.)
+    noTerminalInfo: installed.some((h) => h.style === 'command' && !h.command.includes('X-Clippy-Tty')),
   };
 }
 
-function checkDrift(settings, port = DEFAULT_PORT) {
-  const drift = checkDriftFor(settings, port, SPECS);
+function checkDrift(settings, port = DEFAULT_PORT, { style = defaultHookStyle() } = {}) {
+  const drift = checkDriftFor(settings, port, SPECS, style);
   if (!drift.installed) return drift;
   // No statusline at all means an install older than this build; one the user
   // wrote themselves is respected, so it never counts as drift.
@@ -393,8 +447,10 @@ function settingsPathFor(agent) {
  * create OpenClaw config for people who don't run it (`--agent openclaw`
  * explicitly still works either way).
  */
-function defaultAgents() {
-  const agents = ['claude', 'codex'];
+function defaultAgents(platform = process.platform) {
+  // Codex on Windows is untested, so a bare install there leaves it alone
+  // (`--agent codex` still works for anyone who wants to try).
+  const agents = platform === 'win32' ? ['claude'] : ['claude', 'codex'];
   if (fs.existsSync(path.join(os.homedir(), '.openclaw'))) agents.push('openclaw');
   return agents;
 }
@@ -576,7 +632,10 @@ module.exports = {
   checkCodexDrift,
   checkOpenclawDrift,
   defaultAgents,
+  defaultHookStyle,
   hookCommand,
+  httpHook,
+  HTTP_MARKER_HEADER,
   SPECS,
   CODEX_SPECS,
   OPENCLAW_EVENTS,

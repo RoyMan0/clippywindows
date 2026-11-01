@@ -451,6 +451,9 @@ function appBundlePath() {
 /** Download, verify, and stage a release before the helper replaces this app. */
 async function installLatestUpdate() {
   if (installingUpdate) return { ok: false, error: 'An update is already being prepared.' };
+  if (process.platform !== 'darwin') {
+    return { ok: false, error: 'Automatic updates are Mac-only for now — on Windows, pull the latest code from git.' };
+  }
   const root = path.join(__dirname, '..');
   const info = await checkForUpdates(root);
   if (info.source !== 'packaged') return { ok: false, error: 'Updates install automatically only from the DMG app.' };
@@ -480,6 +483,9 @@ async function installLatestUpdate() {
  * only after the user presses Install and relaunch in Settings.
  */
 async function checkForAutomaticUpdate() {
+  // The release feed carries a signed Mac DMG and nothing else yet, so a
+  // Windows copy has nothing it could install.
+  if (process.platform !== 'darwin') return;
   const root = path.join(__dirname, '..');
   if (localBuild(root).source !== 'packaged') return;
   const info = await checkForUpdates(root);
@@ -2368,6 +2374,17 @@ const closeNewAgentWindow = () => {
 };
 
 function offerTmuxInstall() {
+  if (process.platform === 'win32') {
+    dialog.showMessageBox({
+      type: 'info',
+      message: 'Starting agents from Clippy is not available on Windows yet',
+      detail:
+        'Clippy runs the agents it starts inside tmux, which Windows does not have. Start Claude Code ' +
+        'yourself — in VS Code or a terminal — and its buddy will show up on its own.',
+      buttons: ['OK'],
+    });
+    return;
+  }
   dialog.showMessageBox({
     type: 'info',
     message: 'Starting an agent needs tmux',
@@ -4012,7 +4029,8 @@ function warnOnHookDrift() {
  */
 function installHooksNow() {
   const agents = ['claude'];
-  if (fs.existsSync(path.join(os.homedir(), '.codex'))) agents.push('codex');
+  // Codex hooks are still curl lines, which Windows has not been tested with.
+  if (process.platform !== 'win32' && fs.existsSync(path.join(os.homedir(), '.codex'))) agents.push('codex');
   const results = installToFiles({ port: PORT, agents });
   warnOnHookDrift();
   const failed = results.filter((r) => !r.ok);

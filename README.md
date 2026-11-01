@@ -2,6 +2,8 @@
 
 By [AI Socratic](https://aisocratic.org).
 
+> **This fork is adding Windows support** — see [docs/WINDOWS.md](docs/WINDOWS.md) for what works so far and how to run it.
+
 **[Download the latest Apple-silicon DMG](https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg)** · [Compatibility](docs/COMPATIBILITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Privacy](docs/PRIVACY.md)
 
 Current packaged release: **Apple silicon, macOS 11+**. Intel users can build
