@@ -46,6 +46,7 @@ const {
   promptPosition,
   typeAndSubmit,
   appForPid,
+  runningEditorApp,
   TERMINAL_APP,
   ITERM_APP,
 } = require('./terminal');
@@ -1664,7 +1665,10 @@ async function sendPromptToTerminal(key, text) {
   // that is the prompt; in VS Code it is just as likely an open file, and the
   // extension's chat box isn't reachable by keystrokes at all — so on Windows
   // Clippy only types into terminals it can't mistake for an editor.
-  if (process.platform === 'win32' && tracker.terminalFor(key)?.program === 'vscode') {
+  // The VS Code extension (any platform) has no terminal at all: its chat box
+  // can't be reached by keystrokes, which would land in whatever has focus.
+  const termNow = tracker.terminalFor(key);
+  if (termNow?.entrypoint === 'claude-vscode' || (process.platform === 'win32' && termNow?.program === 'vscode')) {
     tellBuddy(key, 'I can’t type into VS Code safely — use “go to VS Code” and reply there.', { sticky: true });
     return false;
   }
@@ -3758,6 +3762,18 @@ function handleStopWait(payload, ctx) {
   });
 }
 
+/**
+ * Should a reply to this session wake Claude rather than be typed in? Yes
+ * wherever typing can't be trusted to land in the session: Windows, the VS Code
+ * extension, VS Code's own terminal, and sessions on another machine.
+ */
+function prefersRewake(sessionId) {
+  if (process.platform === 'win32') return true;
+  const term = tracker.terminalFor(sessionId);
+  if (!term) return true;
+  return term.entrypoint === 'claude-vscode' || term.program === 'vscode' || !term.pid;
+}
+
 /** Send a reply to a finished turn by waking Claude, if a wait is open. */
 function replyByRewake(sessionId, text) {
   const wait = rewakeWaits.get(sessionId);
@@ -3904,17 +3920,22 @@ async function resolveReview(id, action, message) {
   if (action === 'feedback' && message.trim()) {
     tracker.setStatus(sessionId, WORKING);
     updateTray();
-    // No terminal to type into (VS Code, a remote machine): the background
-    // Stop hook is waiting for exactly this, and waking Claude with it is the
-    // reply.
-    if (replyByRewake(sessionId, message.trim())) {
+    // No terminal to type into (VS Code, a remote machine, Windows): the
+    // background Stop hook is waiting for exactly this, and waking Claude with
+    // it is the reply. A Mac terminal keeps the reply typed in, as before,
+    // unless there's no window to type into.
+    if (prefersRewake(sessionId) && replyByRewake(sessionId, message.trim())) {
       if (!buddyStillHasCards(sessionId)) hideBuddy(sessionId);
       return true;
     }
     // Typing into the terminal has its own failure messages (no window, no
     // accessibility) — only put Clippy away once the prompt actually landed.
-    if (await sendPromptToTerminal(sessionId, message.trim()) && !buddyStillHasCards(sessionId)) {
-      hideBuddy(sessionId);
+    if (await sendPromptToTerminal(sessionId, message.trim())) {
+      if (!buddyStillHasCards(sessionId)) hideBuddy(sessionId);
+    } else if (replyByRewake(sessionId, message.trim())) {
+      // Couldn't type it — the wait still can deliver it.
+      tellBuddy(sessionId, 'Sent to Claude.');
+      if (!buddyStillHasCards(sessionId)) hideBuddy(sessionId);
     }
     return true;
   }
@@ -4179,6 +4200,14 @@ async function learnSourceApp(sessionId, term) {
  * table instead of each starting their own.
  */
 function appFor(term) {
+  // A remote session (the VS Code bridge) has no process here, but it does
+  // have a VS Code window: the editor itself stands in for its app.
+  if (term && !term.pid && term.program === 'vscode' && process.platform === 'darwin') {
+    term.appLookup ||= runningEditorApp()
+      .then((app) => (term.app = app || null))
+      .catch(() => (term.app = null));
+    return term.appLookup;
+  }
   if (!term || !term.pid) return Promise.resolve(null);
   // Terminal.app and iTerm2 are driven by name and tty rather than by pid, so
   // there is no app to resolve — frontmost.js matches those by bundle id.

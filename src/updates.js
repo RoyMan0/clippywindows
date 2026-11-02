@@ -13,7 +13,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const REPO = 'AISocratic/clippy';
+// This fork's own releases. Pointing at upstream would offer its DMG as an
+// "update" and replace every change the fork makes with the original app.
+const REPO = 'RoyMan0/clippywindows';
 const LATEST_URL = `https://api.github.com/repos/${REPO}/commits/main`;
 const RELEASE_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 

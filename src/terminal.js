@@ -43,11 +43,14 @@ function terminalFromHeaders(headers = {}) {
         : get('x-clippy-term') || (get('x-clippy-wt') ? 'Windows Terminal' : '');
     return { program, tty: '', pid: 0, hostPid, entrypoint };
   }
-  const program = get('x-clippy-term');
+  const entrypoint = get('x-clippy-entrypoint');
+  // The VS Code extension has no terminal of its own, whatever TERM_PROGRAM
+  // the editor's environment carries: name it for what it is.
+  const program = entrypoint === 'claude-vscode' ? 'vscode' : get('x-clippy-term');
   if (!program && !tty && !pid) return null;
   // ps prints `s004`-style short names; AppleScript wants the device path.
   const device = tty && tty !== '??' ? (tty.startsWith('/dev/') ? tty : `/dev/tty${tty.replace(/^tty/, '')}`) : '';
-  return { program, tty: device, pid };
+  return entrypoint ? { program, tty: device, pid, entrypoint } : { program, tty: device, pid };
 }
 
 /**
@@ -419,6 +422,35 @@ async function appForPid(pid) {
   }
 }
 
+/** Editors whose windows a remote session can be in, by .app name. */
+const EDITOR_APPS = /\/(Visual Studio Code|Visual Studio Code - Insiders|Code - Insiders|Cursor|Windsurf|VSCodium)\.app\/Contents\/MacOS\//;
+
+/**
+ * The running VS Code-family editor, as the same {pid, name, bundle, bundleId}
+ * appForPid returns — found by its bundle path in the process table rather
+ * than by walking up from a session's process, which a remote session has none
+ * of here.
+ */
+async function runningEditorApp() {
+  try {
+    const table = parseProcessTable(await run('/bin/ps', ['-Ao', 'pid=,ppid=,comm=']));
+    return editorAppIn(table, bundleIdFor);
+  } catch (err) {
+    console.warn('clippy: could not read the process table:', err.message);
+    return null;
+  }
+}
+
+/** Pure half of runningEditorApp, for tests. */
+async function editorAppIn(table, bundleIdOf = async () => '') {
+  for (const [pid, { comm }] of table) {
+    if (!EDITOR_APPS.test(comm)) continue;
+    const app = findAppAncestor(pid, table);
+    if (app) return { ...app, bundleId: await bundleIdOf(app.bundle) };
+  }
+  return null;
+}
+
 /**
  * Resolve everything we need to point at a session's window. Cheap enough to
  * redo on demand, and the app pid is only looked up when the tty route can't
@@ -428,7 +460,16 @@ async function resolveTarget(term, hint = '') {
   if (!term) return null;
   if (process.platform === 'win32') return resolveWindowsTarget(term, hint);
   const direct = term.tty && (term.program === TERMINAL_APP || term.program === ITERM_APP);
-  const app = direct ? null : await appForPid(term.pid);
+  // A session on another machine (the VS Code bridge) has no local process to
+  // walk up from — but it lives in a VS Code window here, titled after its
+  // folder, and the window script picks that window by the hint.
+  const app = direct
+    ? null
+    : term.pid
+    ? await appForPid(term.pid)
+    : term.program === 'vscode'
+    ? await runningEditorApp()
+    : null;
   if (!direct && !app) return null;
   return { program: term.program, tty: term.tty, app, hint };
 }
@@ -564,6 +605,8 @@ module.exports = {
   typeScript,
   typeAndSubmit,
   appForPid,
+  runningEditorApp,
+  editorAppIn,
   bundleIdFor,
   TERMINAL_APP,
   ITERM_APP,

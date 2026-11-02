@@ -1,0 +1,38 @@
+name: macOS build
+
+# The whole test suite on a real Mac, then an unsigned DMG of this branch for
+# testing, with the VS Code bridge extensions beside it. Download from the
+# run's Artifacts → clippy-mac-build.
+#
+# Unsigned and not notarized (the signed release build needs the developer's
+# Apple certificates, see release.yml), so macOS quarantines it: after copying
+# the app to Applications, run
+#   xattr -dr com.apple.quarantine "/Applications/Clippy for Claude Code.app"
+on:
+  push:
+    branches: [windows-support]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run package
+      - run: npm run package:bridge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clippy-mac-build
+          path: |
+            dist/*.dmg
+            dist/clippy-bridge-*.vsix
+          if-no-files-found: error

@@ -326,6 +326,8 @@ function packageApp({
     path.join(__dirname, 'make-buddies.js'),
     path.join(appDir, 'scripts', 'make-buddies.js')
   );
+  // The tray icon and custom buddies draw their PNGs with this file's encoder.
+  fs.copyFileSync(path.join(__dirname, 'package-app.js'), path.join(appDir, 'scripts', 'package-app.js'));
   // The settings window's "add a pet" box installs packs through this.
   fs.copyFileSync(
     path.join(__dirname, 'add-sprite-pack.js'),

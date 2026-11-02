@@ -37,7 +37,7 @@ const groupFor = (settings, event, matcher) =>
 
 test('install adds all hooks and is idempotent', () => {
   const settings = installHooks({}, 43117);
-  assert.equal(listInstalled(settings).length, SPECS.length);
+  assert.equal(listInstalled(settings).length, SPECS.length + 1, 'plus the rewake wait');
 
   const notif = settings.hooks.Notification;
   assert.deepEqual(
@@ -51,7 +51,7 @@ test('install adds all hooks and is idempotent', () => {
 
   // re-install must not duplicate
   installHooks(settings, 43117);
-  assert.equal(listInstalled(settings).length, SPECS.length);
+  assert.equal(listInstalled(settings).length, SPECS.length + 1);
 });
 
 test('Codex install uses its supported hook subset and tags the source', () => {
@@ -160,7 +160,16 @@ test('activity hooks are fire-and-forget and scoped to meaningful tools', () => 
     const cmd = group.hooks[0].command;
     assert.match(cmd, new RegExp(`hook/${event}`));
     assert.doesNotMatch(cmd, /\?kind=/); // matcher is a Claude Code filter, not a ?kind
-    assert.match(cmd, />\/dev\/null 2>&1/); // fire-and-forget, no decision echoed
+    if (event === 'PreToolUse') {
+      assert.match(cmd, />\/dev\/null 2>&1/); // fire-and-forget, no decision echoed
+    } else {
+      // Still never waits (-m 2), but passes Clippy's answer through — empty
+      // unless an approval note is riding back with the tool's result.
+      assert.match(cmd, /X-Clippy-Reply: 1/);
+      assert.match(cmd, /-m 2 /);
+      assert.doesNotMatch(cmd, />\/dev\/null 2>&1/); // the answer is kept
+    }
+    assert.match(cmd, /X-Clippy-Entrypoint/);
     assert.equal(group.hooks[0].timeout, 5);
   }
 
@@ -345,7 +354,7 @@ test('installToFiles writes both agents\' files in-process and is idempotent', (
   assert.deepEqual(results.map((r) => [r.agent, r.ok]), [['claude', true], ['codex', true]]);
 
   const claude = JSON.parse(fs.readFileSync(pathFor('claude'), 'utf8'));
-  assert.equal(listInstalled(claude).length, SPECS.length);
+  assert.equal(listInstalled(claude).length, SPECS.length + 1);
   assert.deepEqual(checkDrift(claude, 5005), {
     installed: true, missing: [], stale: false, wrongPort: false, noTerminalInfo: false,
   });
@@ -357,7 +366,7 @@ test('installToFiles writes both agents\' files in-process and is idempotent', (
   fs.writeFileSync(pathFor('claude'), JSON.stringify(claude));
   installToFiles({ port: 5005, agents: ['claude'], pathFor });
   const again = JSON.parse(fs.readFileSync(pathFor('claude'), 'utf8'));
-  assert.equal(listInstalled(again).length, SPECS.length);
+  assert.equal(listInstalled(again).length, SPECS.length + 1);
   assert.equal(again.theme, 'dark');
 });
 
@@ -483,7 +492,7 @@ test('http hooks from before they carried the editor environment ask to be updat
 
 const { powershellRewake } = require('../bin/clippy-hooks');
 
-test('Windows and relay installs add a background rewake wait to Stop; the Mac does not', () => {
+test('every install adds a background rewake wait to Stop', () => {
   const win = installHooks({}, 43117, { style: 'http' });
   const waitWin = win.hooks.Stop[0].hooks.find((h) => h.asyncRewake);
   assert.equal(waitWin.type, 'command');
@@ -498,8 +507,15 @@ test('Windows and relay installs add a background rewake wait to Stop; the Mac d
   assert.equal(waitRelay.command, `sh "$HOME/.clippy-relay/hook.sh" 'StopWait?source=claude' rewake #clippy`);
 
   const mac = installHooks({}, 43117, { style: 'command' });
-  assert.ok(!mac.hooks.Stop[0].hooks.some((h) => h.asyncRewake));
-  assert.equal(checkDrift(mac, 43117, { style: 'command' }).stale, false);
+  const waitMac = mac.hooks.Stop[0].hooks.find((h) => h.asyncRewake);
+  assert.equal(waitMac.type, 'command');
+  assert.equal(waitMac.shell, undefined, 'plain sh on the Mac');
+  assert.match(waitMac.command, /hook\/StopWait\?source=claude/);
+  assert.match(waitMac.command, /X-Clippy-Text: 1/);
+  assert.match(waitMac.command, />&2; exit 2; }; exit 0 #clippy$/);
+  assert.deepEqual(checkDrift(mac, 43117, { style: 'command' }), {
+    installed: true, missing: [], stale: false, wrongPort: false, noTerminalInfo: false,
+  });
 });
 
 test('an install from before the rewake wait asks to be updated, and is clean after', () => {

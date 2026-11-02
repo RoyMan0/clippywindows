@@ -193,10 +193,24 @@ function createHookServer({ onEvent, getStatus, onStatusline, onFocus, port = 43
         .then((reply) => {
           if (res.writableEnded || res.destroyed) return; // curl already gave up
           const decided = reply && typeof reply === 'object';
+          // The Mac's background reply wait has no JSON parser to hand: it
+          // asks for the reply as plain text, and for nothing at all otherwise.
+          if (req.headers['x-clippy-text']) {
+            const text = decided && typeof reply.clippyRewake === 'string' ? reply.clippyRewake.trim() : '';
+            if (text) {
+              res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+              res.end(text);
+            } else {
+              res.writeHead(204);
+              res.end();
+            }
+            return;
+          }
           // Claude Code's own http hooks (Windows) validate a JSON body against
           // the hook output schema, so a plain ack goes back as an empty 204 —
-          // which they read as "success, no decision".
-          if (!decided && req.headers['x-clippy-hook']) {
+          // which they read as "success, no decision". So do the curl hooks
+          // that pass their answer through (X-Clippy-Reply).
+          if (!decided && (req.headers['x-clippy-hook'] || req.headers['x-clippy-reply'])) {
             res.writeHead(204);
             res.end();
             return;

@@ -63,9 +63,12 @@ const SPECS = [
   // review card shows anyway — feedback goes back as a typed prompt.
   { event: 'Stop' },
   { event: 'PreToolUse', matcher: MEANINGFUL_TOOLS },
-  { event: 'PostToolUse', matcher: MEANINGFUL_TOOLS },
+  // `reply`: still fire-and-forget, but Clippy's answer is passed through —
+  // empty, except right after an approval you added a note to, when it is
+  // that note for Claude to read beside the tool's result.
+  { event: 'PostToolUse', matcher: MEANINGFUL_TOOLS, mode: 'reply' },
   // Claude Code reports a failed tool on its own event, not PostToolUse.
-  { event: 'PostToolUseFailure', matcher: MEANINGFUL_TOOLS },
+  { event: 'PostToolUseFailure', matcher: MEANINGFUL_TOOLS, mode: 'reply' },
   { event: 'UserPromptSubmit' },
   { event: 'SessionEnd' },
   // Subagents report on the parent's session id; these two are how the app
@@ -103,6 +106,9 @@ const CODEX_SPECS = [
 // Sent as headers so the payload Claude Code hands us stays untouched.
 const TERM_HEADERS =
   `-H "X-Clippy-Term: \${TERM_PROGRAM:-}" ` +
+  // "claude-vscode" when the session is the VS Code extension, which has no
+  // terminal: Clippy must not type into it, and replies go another way.
+  `-H "X-Clippy-Entrypoint: \${CLAUDE_CODE_ENTRYPOINT:-}" ` +
   `-H "X-Clippy-Pid: $PPID" ` +
   `-H "X-Clippy-Tty: $(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')" `;
 
@@ -115,6 +121,24 @@ function hookCommand(spec, port, source = 'claude') {
     return (
       `curl -s --connect-timeout 1 -m ${DECIDE_CURL_MAX_S} -X POST '${url}' ` +
       `-H 'Content-Type: application/json' ${TERM_HEADERS}--data-binary @- 2>/dev/null || true ${MARKER}`
+    );
+  }
+  if (spec.mode === 'reply') {
+    // X-Clippy-Reply asks the server for an empty body unless it has
+    // something to say, so nothing reaches Claude Code but a real answer.
+    return (
+      `curl -s -m 2 -X POST '${url}' -H 'Content-Type: application/json' -H 'X-Clippy-Reply: 1' ${TERM_HEADERS}` +
+      `--data-binary @- 2>/dev/null || true ${MARKER}`
+    );
+  }
+  if (spec.mode === 'rewake') {
+    // The background reply wait (see REWAKE_SPEC). X-Clippy-Text makes the
+    // server answer with the reply as plain text, or nothing at all, so sh
+    // needs no JSON parser: words go to stderr with exit 2, which wakes Claude.
+    return (
+      `r=$(curl -s --connect-timeout 1 -m ${REWAKE_TIMEOUT_S - 10} -X POST '${url}' ` +
+      `-H 'Content-Type: application/json' -H 'X-Clippy-Text: 1' ${TERM_HEADERS}--data-binary @- 2>/dev/null); ` +
+      `[ -n "$r" ] && { printf '%s\n' "$r" >&2; exit 2; }; exit 0 ${MARKER}`
     );
   }
   // -m 2: never stall Claude Code; `|| true`: never report an error if the
@@ -184,9 +208,9 @@ const REWAKE_TIMEOUT_S = 1800;
 const REWAKE_SPEC = { event: 'StopWait', hookEvent: 'Stop', mode: 'rewake', timeout: REWAKE_TIMEOUT_S };
 const REWAKE_PATH = '/hook/StopWait';
 
-/** The specs a style installs: the shared list, plus the rewake wait where it applies. */
-function specsFor(style) {
-  return style === 'http' || style === 'relay' ? [...SPECS, REWAKE_SPEC] : SPECS;
+/** The specs a style installs: the shared list, plus the rewake wait. */
+function specsFor() {
+  return [...SPECS, REWAKE_SPEC];
 }
 
 /**
@@ -215,6 +239,8 @@ function powershellRewake(port, source = 'claude') {
 function rewakeHook(port, source, style) {
   return style === 'relay'
     ? { type: 'command', command: relayCommand(REWAKE_SPEC, source), asyncRewake: true, timeout: REWAKE_TIMEOUT_S }
+    : style === 'command'
+    ? { type: 'command', command: hookCommand(REWAKE_SPEC, port, source), asyncRewake: true, timeout: REWAKE_TIMEOUT_S }
     : {
         type: 'command',
         shell: 'powershell',
@@ -407,7 +433,10 @@ function checkDriftFor(settings, port, specs, style = 'command') {
     // environment, and the first Windows build didn't send that yet.
     noTerminalInfo: regular.some((h) =>
       h.style === 'command'
-        ? !h.command.includes('X-Clippy-Tty')
+        ? !h.command.includes('X-Clippy-Tty') ||
+          !h.command.includes('X-Clippy-Entrypoint') ||
+          (specs.some((spec) => spec.mode === 'reply' && spec.event === h.event && (spec.matcher || '') === h.matcher) &&
+            !h.command.includes('X-Clippy-Reply'))
         : h.style === 'http'
         ? !h.headers.includes('X-Clippy-Entrypoint')
         : false

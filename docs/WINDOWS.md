@@ -83,8 +83,7 @@ Claude Code cached from `/usage` (open `/usage` once if that part is empty).
 
 Limits: With two VS Code windows on the
 same remote machine, the first one carries every session's events (they all
-go to the same Clippy anyway). On a Mac the bridge works too, but "go to VS
-Code" can't pick the window for a remote session yet.
+go to the same Clippy anyway). The bridge works the same from a Mac (see [MAC.md](MAC.md)).
 
 ## Behaviour differences on Windows
 
