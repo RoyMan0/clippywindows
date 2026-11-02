@@ -5,6 +5,17 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createBridgeServer } = require('./bridge-core');
+const { createUsagePusher } = require('./usage-push');
+
+// Clippy's own usage reader, copied in at packaging time (see
+// scripts/prepare-bridge.js). Without it the bridge still carries events; the
+// stats panel just has nothing to show for remote sessions.
+let usage = null;
+try {
+  usage = require('./lib/usage');
+} catch {
+  usage = null;
+}
 
 const DELIVER = 'clippyBridge.deliver';
 const CANCEL = 'clippyBridge.cancel';
@@ -13,6 +24,7 @@ const RETRY_MS = 15_000;
 let server = null;
 let retry = null;
 let out = null;
+let pusher = null;
 
 function setting(name, fallback) {
   return vscode.workspace.getConfiguration('clippyBridge').get(name, fallback);
@@ -32,12 +44,19 @@ function start() {
     return;
   }
   const port = Number(setting('port', 43118)) || 43118;
+  const deliver = (ev) => vscode.commands.executeCommand(DELIVER, ev);
+  const log = (msg) => out.appendLine(`${new Date().toISOString()} ${msg}`);
+  pusher?.stop();
+  pusher = usage ? createUsagePusher({ usage, deliver, host: os.hostname(), log }) : null;
   const s = createBridgeServer({
     key,
     host: os.hostname(),
-    deliver: (ev) => vscode.commands.executeCommand(DELIVER, ev),
+    deliver: (ev) => {
+      pusher?.note(ev);
+      return deliver(ev);
+    },
     cancel: (id) => vscode.commands.executeCommand(CANCEL, id),
-    log: (msg) => out.appendLine(`${new Date().toISOString()} ${msg}`),
+    log,
   });
   s.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -82,6 +101,7 @@ function activate(context) {
 }
 
 function deactivate() {
+  pusher?.stop();
   clearTimeout(retry);
   server?.close();
   server = null;

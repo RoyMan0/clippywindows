@@ -2,7 +2,7 @@
   "name": "clippy-bridge-remote",
   "displayName": "Clippy Bridge (remote)",
   "description": "Carries Claude Code hook events from a remote machine (Remote Tunnel / SSH) to Clippy on your computer. Install together with Clippy Bridge (local).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "clippywindows",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/RoyMan0/clippywindows" },

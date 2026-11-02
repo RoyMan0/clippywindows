@@ -277,3 +277,79 @@ test('hook.sh without a key does nothing at all', { skip: process.platform === '
   assert.equal(res.code, 0);
   assert.equal(res.out, '');
 });
+
+/* ---------------- usage read on the remote machine ---------------- */
+
+test('the remote bridge reads usage there and sends it as a ClippyUsage event', async () => {
+  const { createUsagePusher } = require('../vscode/clippy-bridge-remote/usage-push');
+  const usage = require('../src/usage');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-remote-usage-'));
+  const transcript = path.join(dir, 'abc.jsonl');
+  const ts = new Date().toISOString();
+  fs.writeFileSync(
+    transcript,
+    [
+      JSON.stringify({ type: 'user', timestamp: ts, message: { role: 'user', content: 'fix the build' } }),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: ts,
+        message: {
+          model: 'claude-opus-5',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Fixed the build.' }],
+          usage: { input_tokens: 1000, output_tokens: 50, cache_read_input_tokens: 40000, cache_creation_input_tokens: 0 },
+        },
+      }),
+    ].join('\n') + '\n'
+  );
+  const claudeJson = path.join(dir, '.claude.json');
+  fs.writeFileSync(
+    claudeJson,
+    JSON.stringify({
+      cachedUsageUtilization: {
+        fetchedAtMs: 1_785_873_983_262,
+        utilization: { limits: [{ kind: 'session', group: 'session', percent: 37, severity: 'normal', resets_at: null }] },
+      },
+    })
+  );
+
+  const sent = [];
+  const pusher = createUsagePusher({
+    usage,
+    host: 'uder',
+    claudeJson,
+    projectsDir: dir,
+    debounceMs: 10,
+    deliver: async (ev) => sent.push(ev),
+  });
+  pusher.note({ event: 'PreToolUse', body: JSON.stringify({ session_id: 's1', transcript_path: transcript }) });
+  pusher.note({ event: 'PostToolUse', body: JSON.stringify({ session_id: 's1', transcript_path: transcript }) });
+  for (let i = 0; i < 100 && !sent.length; i++) await new Promise((r) => setTimeout(r, 20));
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.equal(sent.length, 1, 'a burst of events is one send');
+  const ev = sent[0];
+  assert.equal(ev.event, 'ClippyUsage');
+  assert.equal(ev.headers['x-clippy-remote'], 'uder');
+  const body = JSON.parse(ev.body);
+  assert.equal(body.session_id, 's1');
+  assert.equal(body.session.context, 41050); // input + cache + output, as Clippy counts it
+  assert.equal(body.recap, 'Fixed the build.');
+  assert.equal(body.official.limits[0].percent, 37);
+  assert.equal(body.windows, null, 'no transcript sweep when Claude Code cached /usage');
+  // It survives VS Code's trip (JSON) intact.
+  assert.deepEqual(JSON.parse(JSON.stringify(body)), body);
+  pusher.stop();
+});
+
+test('events without a transcript, and its own events, never trigger a send', async () => {
+  const { createUsagePusher } = require('../vscode/clippy-bridge-remote/usage-push');
+  const sent = [];
+  const pusher = createUsagePusher({ usage: require('../src/usage'), debounceMs: 5, deliver: async (ev) => sent.push(ev) });
+  pusher.note({ event: 'Stop', body: '{"session_id":"s1"}' });
+  pusher.note({ event: 'ClippyUsage', body: '{"session_id":"s1","transcript_path":"/x"}' });
+  pusher.note({ event: 'Stop', body: 'not json' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(sent.length, 0);
+  pusher.stop();
+});

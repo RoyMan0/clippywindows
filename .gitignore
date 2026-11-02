@@ -35,3 +35,4 @@ build/
 
 # Built VS Code bridge extensions
 vscode/*.vsix
+vscode/clippy-bridge-remote/lib/

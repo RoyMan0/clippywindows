@@ -2389,6 +2389,8 @@ window.clippyAPI.onSettings((s) => {
   // keeps its plate up — not every buddy that happens to exist while the mode
   // says 'one'.
   document.body.classList.toggle('solo', s.isSolo === true);
+  // Name plate switched off: the space it reserved under him goes too.
+  document.body.classList.toggle('no-plate', s.showNamePlate === false);
   applyCharacter();
   applyIdentity();
   render();

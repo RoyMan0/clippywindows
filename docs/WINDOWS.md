@@ -75,15 +75,22 @@ channel logs anything that goes wrong.
 To remove the hooks from the remote machine:
 `sh ~/.clippy-relay/install.sh --uninstall`, then uninstall the two extensions.
 
-Limits: Clippy can't read Claude's conversation files on the other machine, so
-the context meter is empty for remote sessions and the end-of-turn card uses
-the summary Claude Code sends with the event. With two VS Code windows on the
+Usage: the stats panel's numbers come from Claude Code's own files on the
+machine it runs on. For remote sessions the remote extension reads them there
+(with Clippy's own usage code, packaged into it) and sends a summary along with
+the events: context used, the last reply, and the 5-hour / weekly allowance
+Claude Code cached from `/usage` (open `/usage` once if that part is empty).
+
+Limits: With two VS Code windows on the
 same remote machine, the first one carries every session's events (they all
 go to the same Clippy anyway). On a Mac the bridge works too, but "go to VS
 Code" can't pick the window for a remote session yet.
 
 ## Behaviour differences on Windows
 
+- **Hide the name under the buddy** (his pet name — "Pixel", "Mochi"…): Quick
+  settings → uncheck **Show the name under the buddy**. The window shrinks by
+  the space it took; cards still say which session is asking.
 - **No Windows notification by default.** On the Mac each card also lands in
   Notification Center; on Windows a toast on top of the buddy was the same
   news twice. Turn it back on from the tray: Quick settings → **Also show a

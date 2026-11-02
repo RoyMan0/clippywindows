@@ -137,6 +137,9 @@ const settings = {
   // getting in the way of the thing it exists to help with. Held cards are
   // handed straight back to that window instead of being kept here.
   quietWhenFocused: true,
+  // The name plate under the buddy (his pet name, and on a session buddy the
+  // project and model). Off gives the screen space back.
+  showNamePlate: true,
   // A system notification alongside the buddy. On by default on the Mac, where
   // it lands quietly in Notification Center; off on Windows, where a toast
   // sliding in on top of the buddy for every card is the same news twice.
@@ -2102,7 +2105,10 @@ const tmuxRecordFor = (key) => spawned.forKey(key);
 async function recapFor(key) {
   const record = spawned.forKey(key);
   if (record && record.host) return (record.lastSay || '').slice(0, 200);
-  return lastAssistantText(transcriptPathFor(key), { maxChars: 200 });
+  return (
+    (await lastAssistantText(transcriptPathFor(key), { maxChars: 200 })) ||
+    (remoteUsageFor(key)?.recap || '').slice(0, 200)
+  );
 }
 
 /**
@@ -2744,6 +2750,78 @@ function openReader(payload) {
   win.focus();
 }
 
+/* ---------------- Usage for sessions on another machine ---------------- */
+
+/**
+ * A session reached through the remote bridge keeps its transcript and Claude
+ * Code's cached /usage on that machine, where Clippy can't read them. The
+ * bridge reads them there with this same usage code and sends the result as a
+ * `ClippyUsage` event; this is where it lands. Only events that came through
+ * the bridge (they carry the machine's name) are accepted.
+ */
+const REMOTE_USAGE_FRESH_MS = 30 * 60 * 1000;
+const MAX_REMOTE_SESSIONS = 64;
+const remoteSessionUsage = new Map(); // session id -> { host, session, recap, at }
+const remoteAccounts = new Map(); // host -> { official, windows, at }
+
+function rememberRemoteUsage(payload, ctx) {
+  const host = String(ctx?.headers?.['x-clippy-remote'] || '').slice(0, 100);
+  const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : '';
+  if (!host || !sessionId) return;
+  const at = Date.now();
+  remoteSessionUsage.delete(sessionId); // re-inserted last: the map drops the oldest
+  remoteSessionUsage.set(sessionId, {
+    host,
+    session: payload.session && typeof payload.session === 'object' ? payload.session : null,
+    recap: typeof payload.recap === 'string' ? payload.recap.slice(0, 400) : '',
+    at,
+  });
+  while (remoteSessionUsage.size > MAX_REMOTE_SESSIONS) {
+    remoteSessionUsage.delete(remoteSessionUsage.keys().next().value);
+  }
+  const before = remoteAccounts.get(host);
+  remoteAccounts.set(host, {
+    official: payload.official && typeof payload.official === 'object' ? payload.official : before?.official || null,
+    windows: payload.windows && typeof payload.windows === 'object' ? payload.windows : before?.windows || null,
+    at,
+  });
+}
+
+/** This session's numbers as the remote bridge last reported them, if fresh. */
+function remoteUsageFor(key) {
+  const entry = remoteSessionUsage.get(key);
+  return entry && Date.now() - entry.at < REMOTE_USAGE_FRESH_MS ? entry : null;
+}
+
+/**
+ * Fold the remote machines' Claude accounts into the panel's. The allowance is
+ * the account's, not the machine's, so where both sides have Claude Code's
+ * cached /usage the newer one wins; a machine with no local Claude account
+ * just gets the remote one, named after where it came from.
+ */
+function withRemoteAccounts(accounts, ownHost) {
+  const fresh = [...remoteAccounts.entries()].filter(([, a]) => Date.now() - a.at < REMOTE_USAGE_FRESH_MS);
+  if (!fresh.length) return accounts;
+  // The session's own machine first, then the most recently heard from.
+  fresh.sort(([ha, a], [hb, b]) => (ha === ownHost ? -1 : hb === ownHost ? 1 : b.at - a.at));
+  const [host, remote] = fresh[0];
+  const local = accounts.find((a) => a.agent === 'claude');
+  const newer = (x, y) => ((x?.fetchedAtMs || 0) >= (y?.fetchedAtMs || 0) ? x : y);
+  if (!local) {
+    return [{ agent: 'claude', title: `Claude Code (${host})`, official: remote.official, windows: remote.windows }, ...accounts];
+  }
+  return accounts.map((a) =>
+    a === local
+      ? {
+          ...a,
+          official: remote.official && a.official ? newer(remote.official, a.official) : a.official || remote.official,
+          // A session on that machine is measured by that machine's transcripts.
+          windows: ownHost === host && remote.windows ? remote.windows : a.windows,
+        }
+      : a
+  );
+}
+
 /* ---------------- Token usage (right-click) ---------------- */
 
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
@@ -2809,7 +2887,8 @@ async function collectAccounts(now) {
  */
 async function collectUsage(key) {
   const agent = tracker.agentFor(key);
-  const transcriptSession = await sessionUsage(transcriptPathFor(key));
+  const remote = remoteUsageFor(key);
+  const transcriptSession = (await sessionUsage(transcriptPathFor(key))) || remote?.session || null;
   const trackedModel = tracker.modelFor(key);
   const session = transcriptSession
     ? { ...transcriptSession, model: transcriptSession.model || trackedModel }
@@ -2817,9 +2896,10 @@ async function collectUsage(key) {
     ? { model: trackedModel, context: 0, contextLimit: 0, totals: {}, turns: 0 }
     : null;
   const now = Date.now();
-  const accounts = await collectAccounts(now);
+  const accounts = withRemoteAccounts(await collectAccounts(now), remote?.host || '');
   accounts.sort((a, b) => (a.agent === agent ? -1 : b.agent === agent ? 1 : 0));
   const own = accounts.find((a) => a.agent === agent) || { official: null, windows: await usageWindowsFor(agent, now) };
+  if (!own.windows) own.windows = await usageWindowsFor(agent, now);
   return {
     name: buddyOf(key)?.name || '',
     agent,
@@ -3134,6 +3214,12 @@ function globalSettingsMenu() {
       type: 'checkbox',
       checked: settings.autoPerch,
       click: (item) => setSetting('autoPerch', item.checked),
+    },
+    {
+      label: 'Show the name under the buddy',
+      type: 'checkbox',
+      checked: settings.showNamePlate,
+      click: (item) => setSetting('showNamePlate', item.checked),
     },
     {
       label: process.platform === 'win32' ? 'Also show a Windows notification' : 'Also show a system notification',
@@ -4090,6 +4176,12 @@ async function lookingAtItOnWindows(key, term) {
 }
 
 function handleHookEvent(eventName, kind, payload, ctx) {
+  // Not a Claude Code event: the remote bridge's summary of usage it read on
+  // the other machine. Kept aside for the stats panel; nothing else sees it.
+  if (eventName === 'ClippyUsage') {
+    rememberRemoteUsage(payload, ctx);
+    return undefined;
+  }
   // The hook command tags its source in the local URL. Keep the upstream hook
   // payload untouched on the wire, then carry the source through our session
   // model so one app can label Claude, Codex, and OpenClaw buddies correctly.
@@ -4553,7 +4645,10 @@ app.whenReady().then(async () => {
     if (buddy.sessionId.startsWith('sandbox:')) {
       return { session: sandboxUsage(buddy.name).session };
     }
-    return { session: await sessionUsage(transcriptPathFor(buddy.sessionId)) };
+    return {
+      session:
+        (await sessionUsage(transcriptPathFor(buddy.sessionId))) || remoteUsageFor(buddy.sessionId)?.session || null,
+    };
   });
   // "read all" on a card that ends in an ellipsis. Only ever hands a window
   // the rest of its own session's message.

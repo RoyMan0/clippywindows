@@ -319,6 +319,12 @@ body.solo #who {
   opacity: 1;
 }
 
+/* Switched off in Quick settings: gone entirely, not just invisible, so the
+   window shrinks by the room it held. Panels still say who is asking. */
+body.no-plate #who {
+  display: none;
+}
+
 /* The shared main buddy is identified by its own name only. Session buddies
    keep the project and model line so several agents remain scannable. */
 body.solo #who-sub {
