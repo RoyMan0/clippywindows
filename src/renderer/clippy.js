@@ -2284,12 +2284,17 @@ function pageCards(by) {
 
 // answers map for the active answer card: questionText -> label | [labels]
 let answerState = {};
+// What was typed in each question's "Other…" box. Claude's own picker always
+// offers one; an answer is free text to Claude either way.
+let otherState = {};
 
 function renderAnswerOptions(req) {
   answerState = {};
+  otherState = {};
   cardOptions.replaceChildren();
   for (const q of req.questions || []) {
     answerState[q.question] = q.multiSelect ? [] : null;
+    otherState[q.question] = '';
     const group = document.createElement('div');
     group.className = 'opt-group';
     const label = document.createElement('div');
@@ -2312,19 +2317,54 @@ function renderAnswerOptions(req) {
           answerState[q.question] = opt.label;
           [...group.querySelectorAll('.opt')].forEach((b) => b.classList.remove('chosen'));
           btn.classList.add('chosen');
+          // Picking a button over a typed answer: the button wins.
+          other.value = '';
+          otherState[q.question] = '';
         }
         btnSubmit.disabled = !answersComplete();
       });
       group.appendChild(btn);
     }
+    const other = document.createElement('input');
+    other.type = 'text';
+    other.className = 'opt-other';
+    other.placeholder = 'Other… (type your own answer)';
+    other.spellcheck = true;
+    other.addEventListener('input', () => {
+      otherState[q.question] = other.value;
+      // Typing a single-choice answer replaces the button choice.
+      if (!q.multiSelect && other.value.trim()) {
+        answerState[q.question] = null;
+        [...group.querySelectorAll('.opt')].forEach((b) => b.classList.remove('chosen'));
+      }
+      btnSubmit.disabled = !answersComplete();
+    });
+    other.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !btnSubmit.disabled) {
+        e.preventDefault();
+        btnSubmit.click();
+      }
+    });
+    group.appendChild(other);
     cardOptions.appendChild(group);
   }
   cardOptions.classList.remove('hidden');
   btnSubmit.disabled = !answersComplete();
 }
 
+/** Each question's answer: the chosen button(s), plus or instead of typed text. */
+function finalAnswers() {
+  const out = {};
+  for (const [question, chosen] of Object.entries(answerState)) {
+    const typed = String(otherState[question] || '').trim();
+    if (Array.isArray(chosen)) out[question] = typed ? [...chosen, typed] : chosen;
+    else out[question] = typed || chosen;
+  }
+  return out;
+}
+
 function answersComplete() {
-  return Object.values(answerState).every((v) => (Array.isArray(v) ? v.length > 0 : v != null));
+  return Object.values(finalAnswers()).every((v) => (Array.isArray(v) ? v.length > 0 : v != null && v !== ''));
 }
 
 function decide(action, message = '') {
@@ -2814,7 +2854,7 @@ btnFeedback.addEventListener('click', () => {
   if (msg) decide('feedback', msg);
 });
 btnSubmit.addEventListener('click', () => {
-  if (answersComplete()) decide('answer', JSON.stringify(answerState));
+  if (answersComplete()) decide('answer', JSON.stringify(finalAnswers()));
 });
 /**
  * The corner (x) on a held card.
@@ -2835,7 +2875,7 @@ document.getElementById('card-next').addEventListener('click', () => pageCards(1
 // being typed into it, where they mean "move the caret".
 document.addEventListener('keydown', (e) => {
   if (!activeRequestId || requests.size < 2) return;
-  if (e.target === cardInput || e.target.tagName === 'TEXTAREA') return;
+  if (e.target === cardInput || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
   if (e.key === 'ArrowLeft') {
     e.preventDefault();
     pageCards(-1);

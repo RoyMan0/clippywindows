@@ -34,7 +34,8 @@ function createDeliverer({ port = 43117, request = http.request, timeoutMs = TIM
           method: 'POST',
           path: `/hook/${ev.event}${query ? `?${query}` : ''}`,
           headers,
-          timeout: timeoutMs,
+          // The rewake wait is held for up to half an hour, by design.
+          timeout: Number(ev.waitMs) > 0 ? Math.min(Number(ev.waitMs), 1_800_000) : timeoutMs,
         },
         (res) => {
           let body = '';

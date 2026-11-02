@@ -2,7 +2,7 @@
   "name": "clippy-bridge-ui",
   "displayName": "Clippy Bridge (local)",
   "description": "The half of the Clippy bridge that runs on your computer: hands Claude Code events from a remote machine to Clippy. Install together with Clippy Bridge (remote).",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "clippywindows",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/RoyMan0/clippywindows" },

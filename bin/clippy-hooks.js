@@ -164,8 +164,64 @@ const RELAY_HOOK = '.clippy-relay/hook.sh';
 
 /** The same hook, routed through the relay; interactive ones are held open. */
 function relayCommand(spec, source = 'claude') {
-  const hold = spec.mode === 'decide' ? ' hold' : '';
+  const hold = spec.mode === 'decide' ? ' hold' : spec.mode === 'rewake' ? ' rewake' : '';
   return `sh "$HOME/${RELAY_HOOK}" '${hookPath(spec, source)}'${hold} ${MARKER}`;
+}
+
+/**
+ * Replying to a finished turn without a terminal to type into.
+ *
+ * Where Clippy can't type the reply into the session (the VS Code extension,
+ * a remote machine), it waits in the background instead: a second Stop hook
+ * with `asyncRewake`, which Claude Code runs after the turn has ended without
+ * holding anything up. It stays open until you reply on Clippy's review card —
+ * then it exits 2 with your words, which wakes Claude to act on them — or until
+ * you sign the turn off, type in the session yourself, or half an hour passes,
+ * when it exits 0 and nothing happens. Only installed for the http and relay
+ * styles: on the Mac's terminals the reply is typed in, as it always was.
+ */
+const REWAKE_TIMEOUT_S = 1800;
+const REWAKE_SPEC = { event: 'StopWait', hookEvent: 'Stop', mode: 'rewake', timeout: REWAKE_TIMEOUT_S };
+const REWAKE_PATH = '/hook/StopWait';
+
+/** The specs a style installs: the shared list, plus the rewake wait where it applies. */
+function specsFor(style) {
+  return style === 'http' || style === 'relay' ? [...SPECS, REWAKE_SPEC] : SPECS;
+}
+
+/**
+ * The rewake wait for Windows: a command hook (Claude Code only runs command
+ * hooks in the background), pinned to PowerShell so it doesn't depend on Git
+ * Bash. Plain .NET HttpWebRequest rather than Invoke-WebRequest: no proxy, a
+ * half-hour timeout, and nothing to initialise. Anything going wrong — Clippy
+ * not running, no answer — ends in exit 0, which changes nothing.
+ */
+function powershellRewake(port, source = 'claude') {
+  const url = `http://127.0.0.1:${port}${REWAKE_PATH}?source=${source}`;
+  const ms = (REWAKE_TIMEOUT_S - 10) * 1000;
+  return (
+    `$b=[Console]::In.ReadToEnd();try{` +
+    `$q=[Net.HttpWebRequest]::Create('${url}');$q.Method='POST';$q.Proxy=$null;` +
+    `$q.Timeout=${ms};$q.ReadWriteTimeout=${ms};$q.ContentType='application/json';` +
+    `$q.Headers.Add('X-Clippy-Hook','${MARKER}');` +
+    `$q.Headers.Add('X-Clippy-Entrypoint',[string]$env:CLAUDE_CODE_ENTRYPOINT);` +
+    `$d=[Text.Encoding]::UTF8.GetBytes($b);$s=$q.GetRequestStream();$s.Write($d,0,$d.Length);$s.Close();` +
+    `$t=(New-Object IO.StreamReader($q.GetResponse().GetResponseStream())).ReadToEnd();` +
+    `$j=$t|ConvertFrom-Json;if($j.clippyRewake){[Console]::Error.WriteLine([string]$j.clippyRewake);exit 2}` +
+    `}catch{};exit 0 ${MARKER}`
+  );
+}
+
+function rewakeHook(port, source, style) {
+  return style === 'relay'
+    ? { type: 'command', command: relayCommand(REWAKE_SPEC, source), asyncRewake: true, timeout: REWAKE_TIMEOUT_S }
+    : {
+        type: 'command',
+        shell: 'powershell',
+        command: powershellRewake(port, source),
+        asyncRewake: true,
+        timeout: REWAKE_TIMEOUT_S,
+      };
 }
 
 /**
@@ -225,7 +281,8 @@ function installHooksFor(settings, port, specs, source, style = 'command') {
   uninstallHooks(settings); // idempotent: replace any previous install
   settings.hooks = settings.hooks || {};
   for (const spec of specs) {
-    const groups = (settings.hooks[spec.event] = settings.hooks[spec.event] || []);
+    const event = spec.hookEvent || spec.event;
+    const groups = (settings.hooks[event] = settings.hooks[event] || []);
     let group = groups.find((g) => (g.matcher || '') === (spec.matcher || ''));
     if (!group) {
       group = spec.matcher ? { matcher: spec.matcher, hooks: [] } : { hooks: [] };
@@ -233,6 +290,10 @@ function installHooksFor(settings, port, specs, source, style = 'command') {
     }
     group.hooks = group.hooks || [];
     const timeout = spec.timeout || (spec.mode === 'decide' ? DECIDE_HOOK_TIMEOUT_S : 5);
+    if (spec.mode === 'rewake') {
+      group.hooks.push(rewakeHook(port, source, style));
+      continue;
+    }
     group.hooks.push(
       style === 'http'
         ? { ...httpHook(spec, port, source), timeout }
@@ -246,7 +307,7 @@ function installHooksFor(settings, port, specs, source, style = 'command') {
 
 /** Add Claude Code hooks to ~/.claude/settings.json. */
 function installHooks(settings, port = DEFAULT_PORT, { style = defaultHookStyle() } = {}) {
-  installHooksFor(settings, port, SPECS, 'claude', style);
+  installHooksFor(settings, port, specsFor(style), 'claude', style);
   // Claude Code renders exactly one statusline, so a user's own stays theirs:
   // we only claim the slot when it's empty (uninstallHooks above already
   // cleared a previous install of ours).
@@ -277,7 +338,13 @@ function collectOurs(settings) {
             event,
             matcher: group.matcher || '',
             style:
-              hook.type === 'http' ? 'http' : String(hook.command).includes(RELAY_HOOK) ? 'relay' : 'command',
+              hook.type === 'http'
+                ? 'http'
+                : String(hook.command).includes('StopWait')
+                ? 'rewake'
+                : String(hook.command).includes(RELAY_HOOK)
+                ? 'relay'
+                : 'command',
             command: String(hook.type === 'http' ? hook.url : hook.command),
             headers: hook.type === 'http' ? Object.keys(hook.headers || {}) : [],
           });
@@ -307,11 +374,14 @@ function checkDriftFor(settings, port, specs, style = 'command') {
   }
 
   const missing = specs
-    .filter(
-      (spec) =>
-        !installed.find((h) => h.event === spec.event && h.matcher === (spec.matcher || ''))
+    .filter((spec) =>
+      spec.mode === 'rewake'
+        ? !installed.find((h) => h.style === 'rewake')
+        : !installed.find((h) => h.style !== 'rewake' && h.event === spec.event && h.matcher === (spec.matcher || ''))
     )
-    .map((spec) => `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`);
+    .map((spec) => (spec.mode === 'rewake' ? 'Stop (reply from Clippy)' : `${spec.event}${spec.matcher ? ` (${spec.matcher})` : ''}`));
+  const wantsRewake = specs.some((spec) => spec.mode === 'rewake');
+  const regular = installed.filter((h) => h.style !== 'rewake');
 
   return {
     installed: true,
@@ -320,18 +390,22 @@ function checkDriftFor(settings, port, specs, style = 'command') {
     // from an old install until a re-install clears them.
     // So do hooks of the wrong kind for this machine: curl lines carried over
     // to Windows, say, where the shell that would run them may not exist.
-    stale: installed.some(
-      (h) =>
-        h.style !== style ||
-        !specs.find((spec) => spec.event === h.event && (spec.matcher || '') === h.matcher)
-    ),
+    stale:
+      (!wantsRewake && installed.some((h) => h.style === 'rewake')) ||
+      regular.some(
+        (h) =>
+          h.style !== style ||
+          !specs.find((spec) => spec.event === h.event && (spec.matcher || '') === h.matcher)
+      ),
     // Relay hooks dial the relay, not Clippy, so they have no port to be wrong about.
-    wrongPort: installed.some((h) => h.style !== 'relay' && !h.command.includes(`127.0.0.1:${port}/`)),
+    wrongPort: installed.some(
+      (h) => h.style !== 'relay' && !(h.style === 'rewake' && h.command.includes(RELAY_HOOK)) && !h.command.includes(`127.0.0.1:${port}/`)
+    ),
     // Older installs don't report which terminal they ran in, so "open the
     // session's window" has nothing to aim at.
     // An http hook has no tty to report; what it can carry is the editor's
     // environment, and the first Windows build didn't send that yet.
-    noTerminalInfo: installed.some((h) =>
+    noTerminalInfo: regular.some((h) =>
       h.style === 'command'
         ? !h.command.includes('X-Clippy-Tty')
         : h.style === 'http'
@@ -342,7 +416,7 @@ function checkDriftFor(settings, port, specs, style = 'command') {
 }
 
 function checkDrift(settings, port = DEFAULT_PORT, { style = defaultHookStyle() } = {}) {
-  const drift = checkDriftFor(settings, port, SPECS, style);
+  const drift = checkDriftFor(settings, port, specsFor(style), style);
   if (!drift.installed) return drift;
   // No statusline at all means an install older than this build; one the user
   // wrote themselves is respected, so it never counts as drift.
@@ -677,6 +751,9 @@ module.exports = {
   hookCommand,
   httpHook,
   relayCommand,
+  powershellRewake,
+  specsFor,
+  REWAKE_SPEC,
   HTTP_MARKER_HEADER,
   SPECS,
   CODEX_SPECS,

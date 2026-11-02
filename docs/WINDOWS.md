@@ -88,6 +88,16 @@ Code" can't pick the window for a remote session yet.
 
 ## Behaviour differences on Windows
 
+- **Text on cards reaches Claude**, without typing into VS Code:
+  - *Approval card:* words typed with **Deny** are Claude's reason, as
+    before; words typed with **Allow** come back to Claude with the tool's
+    result (Claude Code's approve can't carry a message itself).
+  - *Question card:* each question has an **Other…** box for your own answer.
+  - *Finished card:* a reply wakes Claude with it. A background Stop hook
+    (Claude Code's `asyncRewake`) waits up to 30 minutes after each turn; it
+    ends quietly if you click *looks good* or type in VS Code instead. After
+    updating, use the tray's **Hooks are out of date — update them now** on
+    this computer, and re-run the setup command on remote machines.
 - **Hide the name under the buddy** (his pet name — "Pixel", "Mochi"…): Quick
   settings → uncheck **Show the name under the buddy**. The window shrinks by
   the space it took; cards still say which session is asking.

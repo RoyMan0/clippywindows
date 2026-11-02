@@ -21,6 +21,9 @@ const crypto = require('node:crypto');
 
 const MAX_BODY = 1024 * 1024;
 const HOLD_MAX_MS = 115_000; // under the hook's 120 s
+const REWAKE_MAX_MS = 1_785_000; // under the rewake hook's 30 minutes
+const NOTE_TTL_MS = 10 * 60_000;
+const AFTER_TOOL = new Set(['PostToolUse', 'PostToolUseFailure']);
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
@@ -71,6 +74,11 @@ function createBridgeServer({ key, deliver, cancel = () => {}, log = () => {}, h
   if (!key) throw new Error('the bridge needs a key');
   let seq = 0;
   const prefix = crypto.randomBytes(4).toString('hex');
+  // Notes typed on an approval card. Claude Code's "allow" can't carry words,
+  // so Clippy hands them back beside its answer (`clippyNote`, stripped here
+  // before the hook sees it) and they ride along with the tool's result, on
+  // that session's next PostToolUse.
+  const notes = new Map(); // session id -> { text, at }
   const stats = { delivered: 0, failed: 0, lastError: '' };
 
   return Object.assign(
@@ -91,7 +99,9 @@ function createBridgeServer({ key, deliver, cancel = () => {}, log = () => {}, h
         return;
       }
       const hold = url.searchParams.get('hold') === '1';
+      const rewake = url.searchParams.get('rewake') === '1';
       url.searchParams.delete('hold');
+      url.searchParams.delete('rewake');
 
       const chunks = [];
       let size = 0;
@@ -110,7 +120,12 @@ function createBridgeServer({ key, deliver, cancel = () => {}, log = () => {}, h
           query: url.searchParams.toString(),
           headers: { ...forwardedHeaders(req.headers), 'x-clippy-hook': '#clippy', 'x-clippy-remote': host },
           body: Buffer.concat(chunks).toString('utf8'),
+          ...(rewake ? { waitMs: REWAKE_MAX_MS + 5000 } : {}),
         };
+        let sessionId = '';
+        try {
+          sessionId = String(JSON.parse(ev.body || '{}').session_id || '');
+        } catch {}
         const sent = Promise.resolve()
           .then(() => deliver(ev))
           .then(
@@ -127,6 +142,15 @@ function createBridgeServer({ key, deliver, cancel = () => {}, log = () => {}, h
           );
 
         if (!hold) {
+          const note = AFTER_TOOL.has(ev.event) && notes.get(sessionId);
+          if (note) {
+            notes.delete(sessionId);
+            if (Date.now() - note.at < NOTE_TTL_MS) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(noteOutput(ev.event, note.text)));
+              return;
+            }
+          }
           res.writeHead(204).end();
           return;
         }
@@ -138,10 +162,26 @@ function createBridgeServer({ key, deliver, cancel = () => {}, log = () => {}, h
             } catch {}
           }
         });
-        withTimeout(sent, holdMaxMs).then((reply) => {
+        withTimeout(sent, rewake ? REWAKE_MAX_MS : holdMaxMs).then((reply) => {
           answered = true;
           if (res.writableEnded || res.destroyed) return;
-          const body = reply && reply.status === 200 ? String(reply.body || '').trim() : '';
+          let body = reply && reply.status === 200 ? String(reply.body || '').trim() : '';
+          let parsed = null;
+          try {
+            parsed = body.startsWith('{') ? JSON.parse(body) : null;
+          } catch {}
+          if (rewake) {
+            // hook.sh prints this on stderr and exits 2: Claude wakes up to it.
+            const text = parsed && typeof parsed.clippyRewake === 'string' ? parsed.clippyRewake.trim() : '';
+            if (text) res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(text);
+            else res.writeHead(204).end();
+            return;
+          }
+          if (parsed && typeof parsed.clippyNote === 'string') {
+            if (sessionId && parsed.clippyNote.trim()) notes.set(sessionId, { text: parsed.clippyNote.trim(), at: Date.now() });
+            delete parsed.clippyNote;
+            body = JSON.stringify(parsed);
+          }
           if (body.startsWith('{')) {
             res.writeHead(200, { 'Content-Type': 'application/json' }).end(body);
           } else {
@@ -154,4 +194,14 @@ function createBridgeServer({ key, deliver, cancel = () => {}, log = () => {}, h
   );
 }
 
-module.exports = { createBridgeServer, fromLoopbackClient, sameKey, forwardedHeaders, HOLD_MAX_MS };
+/** What a PostToolUse hook answers to put the user's note beside the result. */
+function noteOutput(event, text) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: event,
+      additionalContext: `When approving this tool call, the user added (via Clippy): ${text}`,
+    },
+  };
+}
+
+module.exports = { noteOutput, createBridgeServer, fromLoopbackClient, sameKey, forwardedHeaders, HOLD_MAX_MS };

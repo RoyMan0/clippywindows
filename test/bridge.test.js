@@ -188,7 +188,7 @@ test('when the local half is missing entirely, the hook still passes', async () 
 
 test('relay hooks install, are ours, and are never reported as out of date for their style', () => {
   const settings = installHooks({}, 43117, { style: 'relay' });
-  assert.equal(listInstalled(settings).length, SPECS.length);
+  assert.equal(listInstalled(settings).length, SPECS.length + 1, 'plus the rewake wait');
   const perm = settings.hooks.PermissionRequest[0].hooks[0];
   assert.equal(perm.command, `sh "$HOME/.clippy-relay/hook.sh" 'PermissionRequest?source=claude' hold #clippy`);
   assert.equal(perm.timeout, 120);
@@ -352,4 +352,69 @@ test('events without a transcript, and its own events, never trigger a send', as
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(sent.length, 0);
   pusher.stop();
+});
+
+/* ---------------- words back to Claude ---------------- */
+
+test('a note typed beside Allow comes back with that session\'s next tool result', async () => {
+  await withChain(
+    (event) =>
+      event === 'PermissionRequest'
+        ? { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } }, clippyNote: 'use --force this time' }
+        : undefined,
+    async ({ base }) => {
+      const perm = await request(base, {
+        path: '/hook/PermissionRequest?source=claude&hold=1',
+        method: 'POST',
+        headers: keyed(),
+        body: '{"session_id":"s1","tool_name":"Bash"}',
+      });
+      const decision = JSON.parse(perm.text);
+      assert.equal(decision.hookSpecificOutput.decision.behavior, 'allow');
+      assert.equal(decision.clippyNote, undefined, 'the hook never sees the extra field');
+
+      const other = await request(base, { path: '/hook/PostToolUse?source=claude', method: 'POST', headers: keyed(), body: '{"session_id":"s2"}' });
+      assert.equal(other.status, 204, 'another session gets nothing');
+      const post = await request(base, { path: '/hook/PostToolUse?source=claude', method: 'POST', headers: keyed(), body: '{"session_id":"s1"}' });
+      assert.equal(post.status, 200);
+      const out = JSON.parse(post.text).hookSpecificOutput;
+      assert.equal(out.hookEventName, 'PostToolUse');
+      assert.match(out.additionalContext, /use --force this time/);
+      const again = await request(base, { path: '/hook/PostToolUse?source=claude', method: 'POST', headers: keyed(), body: '{"session_id":"s1"}' });
+      assert.equal(again.status, 204, 'delivered once');
+    }
+  );
+});
+
+test('hook.sh in rewake mode exits 2 with the reply, and 0 when signed off', { skip: process.platform === 'win32' || !hasCurl }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-bridge-'));
+  fs.writeFileSync(path.join(dir, 'key'), `${KEY}\n`);
+  let answer = null;
+  await withChain(
+    (event) => (event === 'StopWait' ? new Promise((r) => setTimeout(() => r(answer), 200)) : undefined),
+    async ({ bridgePort }) => {
+      const env = { CLIPPY_RELAY_PORT: String(bridgePort) };
+      const runRewake = () =>
+        new Promise((resolve) => {
+          const child = spawn('sh', [path.join(__dirname, '..', 'relay', 'hook.sh'), 'StopWait?source=claude', 'rewake'], {
+            env: { ...process.env, CLIPPY_RELAY_DIR: dir, ...env },
+          });
+          let out = '';
+          let err = '';
+          child.stdout.on('data', (d) => (out += d));
+          child.stderr.on('data', (d) => (err += d));
+          child.on('exit', (code) => resolve({ code, out, err }));
+          child.stdin.end('{"session_id":"s1"}');
+        });
+      answer = { clippyRewake: 'The user replied to your last message via Clippy:\n\nAlso update the README.' };
+      const replied = await runRewake();
+      assert.equal(replied.code, 2);
+      assert.equal(replied.out, '');
+      assert.match(replied.err, /Also update the README\./);
+      answer = {};
+      const signedOff = await runRewake();
+      assert.equal(signedOff.code, 0);
+      assert.equal(signedOff.err, '');
+    }
+  );
 });

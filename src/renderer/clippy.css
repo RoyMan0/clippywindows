@@ -968,6 +968,27 @@ button.opt.chosen {
   color: var(--ink);
 }
 
+/* "Other…": your own answer, as in Claude's own picker. */
+input.opt-other {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 2px 0 4px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  border: 1px dashed #b9b9b9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--ink);
+}
+
+input.opt-other:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--ok);
+}
+
 button.opt.chosen::after {
   content: ' ✓';
   color: var(--ok);

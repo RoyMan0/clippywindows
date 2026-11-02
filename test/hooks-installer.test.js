@@ -446,7 +446,7 @@ test('http hooks install, are recognised as ours, and uninstall cleanly', () => 
     groupFor(settings, 'Notification', 'idle_prompt').hooks[0].url,
     'http://127.0.0.1:43117/hook/Notification?kind=idle_prompt&source=claude'
   );
-  assert.equal(listInstalled(settings).length, SPECS.length);
+  assert.equal(listInstalled(settings).length, SPECS.length + 1, 'plus the rewake wait');
 
   const fresh = checkDrift(settings, 43117, { style: 'http' });
   assert.deepEqual(fresh, { installed: true, missing: [], stale: false, wrongPort: false, noTerminalInfo: false });
@@ -462,7 +462,8 @@ test('curl hooks carried over to Windows count as stale, and a reinstall swaps t
   assert.equal(checkDrift(settings, 43117, { style: 'http' }).stale, true);
   installHooks(settings, 43117, { style: 'http' });
   assert.equal(checkDrift(settings, 43117, { style: 'http' }).stale, false);
-  assert.ok(Object.values(settings.hooks).flat().flatMap((g) => g.hooks).every((h) => h.type === 'http'));
+  const all = Object.values(settings.hooks).flat().flatMap((g) => g.hooks);
+  assert.ok(all.filter((h) => !h.asyncRewake).every((h) => h.type === 'http'));
 });
 
 test('an http hook without our marker header is never ours', () => {
@@ -478,4 +479,43 @@ test('http hooks from before they carried the editor environment ask to be updat
     for (const hook of group.hooks) hook.headers = { [HTTP_MARKER_HEADER]: MARKER, 'X-Clippy-Term': '${TERM_PROGRAM}' };
   }
   assert.equal(checkDrift(settings, 43117, { style: 'http' }).noTerminalInfo, true);
+});
+
+const { powershellRewake } = require('../bin/clippy-hooks');
+
+test('Windows and relay installs add a background rewake wait to Stop; the Mac does not', () => {
+  const win = installHooks({}, 43117, { style: 'http' });
+  const waitWin = win.hooks.Stop[0].hooks.find((h) => h.asyncRewake);
+  assert.equal(waitWin.type, 'command');
+  assert.equal(waitWin.shell, 'powershell');
+  assert.equal(waitWin.timeout, 1800);
+  assert.match(waitWin.command, /127\.0\.0\.1:43117\/hook\/StopWait\?source=claude/);
+  assert.match(waitWin.command, /exit 2/);
+  assert.match(waitWin.command, /#clippy$/);
+
+  const relay = installHooks({}, 43117, { style: 'relay' });
+  const waitRelay = relay.hooks.Stop[0].hooks.find((h) => h.asyncRewake);
+  assert.equal(waitRelay.command, `sh "$HOME/.clippy-relay/hook.sh" 'StopWait?source=claude' rewake #clippy`);
+
+  const mac = installHooks({}, 43117, { style: 'command' });
+  assert.ok(!mac.hooks.Stop[0].hooks.some((h) => h.asyncRewake));
+  assert.equal(checkDrift(mac, 43117, { style: 'command' }).stale, false);
+});
+
+test('an install from before the rewake wait asks to be updated, and is clean after', () => {
+  const settings = installHooks({}, 43117, { style: 'http' });
+  settings.hooks.Stop[0].hooks = settings.hooks.Stop[0].hooks.filter((h) => !h.asyncRewake);
+  assert.deepEqual(checkDrift(settings, 43117, { style: 'http' }).missing, ['Stop (reply from Clippy)']);
+  installHooks(settings, 43117, { style: 'http' });
+  assert.deepEqual(checkDrift(settings, 43117, { style: 'http' }).missing, []);
+  assert.equal(checkDrift(settings, 5000, { style: 'http' }).wrongPort, true, 'the wait dials the port too');
+  uninstallHooks(settings);
+  assert.equal(settings.hooks, undefined);
+});
+
+test('the PowerShell wait never quotes anything it was not given', () => {
+  const cmd = powershellRewake(43117);
+  // One single-quoted URL and fixed literals: no user data is interpolated.
+  assert.ok(!cmd.includes('"'), 'no double quotes for PowerShell to expand');
+  assert.equal((cmd.match(/'/g) || []).length % 2, 0);
 });

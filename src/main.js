@@ -3684,7 +3684,86 @@ async function handlePermissionRequest(payload, ctx) {
       });
     }
   }
-  return toHookResponse('PermissionRequest', action, message);
+  const reply = toHookResponse('PermissionRequest', action, message);
+  // Words typed beside "Allow": Claude Code's allow can't carry any, so they
+  // go with the tool's result instead (see approvalNotes).
+  const note = action === 'allow' ? String(message || '').trim() : '';
+  if (note) {
+    if (ctx?.headers?.['x-clippy-remote']) {
+      // Through the bridge: it keeps the note and answers that session's next
+      // PostToolUse itself, since those hooks never wait for Clippy.
+      return { ...reply, clippyNote: note };
+    }
+    approvalNotes.set(reaction.sessionId, { text: note, at: Date.now() });
+  }
+  return reply;
+}
+
+/**
+ * Notes typed on an approval card, waiting for the tool to finish. The session's
+ * next PostToolUse answers with them as `additionalContext`, which Claude reads
+ * beside the tool's result. That works where Clippy's own server answers the
+ * hook (Windows' http hooks); the Mac's curl hooks throw their answer away, so
+ * there a note typed with Allow still goes nowhere — use Deny to send words.
+ */
+const approvalNotes = new Map(); // session id -> { text, at }
+const APPROVAL_NOTE_TTL_MS = 10 * 60 * 1000;
+
+function takeApprovalNote(eventName, sessionId) {
+  const note = approvalNotes.get(sessionId);
+  if (!note) return undefined;
+  approvalNotes.delete(sessionId);
+  if (Date.now() - note.at > APPROVAL_NOTE_TTL_MS) return undefined;
+  return {
+    hookSpecificOutput: {
+      hookEventName: eventName,
+      additionalContext: `When approving this tool call, the user added (via Clippy): ${note.text}`,
+    },
+  };
+}
+
+/* ---------------- Replying to a finished turn, without a terminal ---------------- */
+
+/**
+ * The background Stop hook (`asyncRewake`, see bin/clippy-hooks.js) waits here
+ * after every turn on Windows and remote machines. A reply typed on the review
+ * card answers it with `clippyRewake`, and the hook exits 2 with those words —
+ * Claude Code wakes Claude with them, no terminal involved. Signing the turn
+ * off, typing in the session itself, a new turn or the half hour running out
+ * all answer {} and the hook ends quietly.
+ */
+const rewakeWaits = new Map(); // session id -> { resolve }
+const REWAKE_WAIT_MS = 29 * 60 * 1000;
+
+function handleStopWait(payload, ctx) {
+  const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : '';
+  if (!sessionId) return {};
+  rewakeWaits.get(sessionId)?.resolve({}); // one wait per session: the newest turn
+  return new Promise((resolve) => {
+    let timer = null;
+    const wait = {
+      resolve: (reply) => {
+        clearTimeout(timer);
+        if (rewakeWaits.get(sessionId) === wait) rewakeWaits.delete(sessionId);
+        resolve(reply);
+      },
+    };
+    timer = setTimeout(() => wait.resolve({}), REWAKE_WAIT_MS);
+    timer.unref?.();
+    rewakeWaits.set(sessionId, wait);
+    ctx?.onClose?.(() => {
+      clearTimeout(timer);
+      if (rewakeWaits.get(sessionId) === wait) rewakeWaits.delete(sessionId);
+    });
+  });
+}
+
+/** Send a reply to a finished turn by waking Claude, if a wait is open. */
+function replyByRewake(sessionId, text) {
+  const wait = rewakeWaits.get(sessionId);
+  if (!wait) return false;
+  wait.resolve({ clippyRewake: `The user replied to your last message via Clippy:\n\n${text}` });
+  return true;
 }
 
 /**
@@ -3825,6 +3904,13 @@ async function resolveReview(id, action, message) {
   if (action === 'feedback' && message.trim()) {
     tracker.setStatus(sessionId, WORKING);
     updateTray();
+    // No terminal to type into (VS Code, a remote machine): the background
+    // Stop hook is waiting for exactly this, and waking Claude with it is the
+    // reply.
+    if (replyByRewake(sessionId, message.trim())) {
+      if (!buddyStillHasCards(sessionId)) hideBuddy(sessionId);
+      return true;
+    }
     // Typing into the terminal has its own failure messages (no window, no
     // accessibility) — only put Clippy away once the prompt actually landed.
     if (await sendPromptToTerminal(sessionId, message.trim()) && !buddyStillHasCards(sessionId)) {
@@ -3832,6 +3918,8 @@ async function resolveReview(id, action, message) {
     }
     return true;
   }
+  // Signed off: the background wait can stop waiting.
+  rewakeWaits.get(sessionId)?.resolve({});
   // The renderer removed only this card and paged to the next one. Do not hide
   // that next card just because the completed review itself held no hook open.
   if (!buddyStillHasCards(sessionId)) hideBuddy(sessionId);
@@ -4181,6 +4269,20 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   if (eventName === 'ClippyUsage') {
     rememberRemoteUsage(payload, ctx);
     return undefined;
+  }
+  // The background wait for a reply to the turn that just ended.
+  if (eventName === 'StopWait') return handleStopWait(payload, ctx);
+  // You typed in the session yourself, or it ended: nothing to wait for.
+  if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') {
+    rewakeWaits.get(payload?.session_id)?.resolve({});
+  }
+  // A note typed beside "Allow" rides back with the tool's result.
+  if (eventName === 'PostToolUse' || eventName === 'PostToolUseFailure') {
+    const withNote = takeApprovalNote(eventName, payload?.session_id);
+    if (withNote) {
+      handleHookEvent(eventName, kind, payload, ctx); // the usual bookkeeping, note already taken
+      return withNote;
+    }
   }
   // The hook command tags its source in the local URL. Keep the upstream hook
   // payload untouched on the wire, then carry the source through our session
