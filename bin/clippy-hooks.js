@@ -147,10 +147,25 @@ function defaultHookStyle(platform = process.platform) {
   return platform === 'win32' ? 'http' : 'command';
 }
 
-function hookUrl(spec, port, source) {
+/** `Stop?source=claude`, `Notification?kind=idle_prompt&source=claude`, … */
+function hookPath(spec, source) {
   const kind = spec.event === 'Notification' && spec.matcher ? `?kind=${spec.matcher}` : '';
   const separator = kind ? '&' : '?';
-  return `http://127.0.0.1:${port}/hook/${spec.event}${kind}${separator}source=${source}`;
+  return `${spec.event}${kind}${separator}source=${source}`;
+}
+
+function hookUrl(spec, port, source) {
+  return `http://127.0.0.1:${port}/hook/${hookPath(spec, source)}`;
+}
+
+// On a remote machine (a NAS behind a VS Code Remote Tunnel), the hooks talk
+// to the Clippy relay on that machine instead — see relay/clippy-relay.js.
+const RELAY_HOOK = '.clippy-relay/hook.sh';
+
+/** The same hook, routed through the relay; interactive ones are held open. */
+function relayCommand(spec, source = 'claude') {
+  const hold = spec.mode === 'decide' ? ' hold' : '';
+  return `sh "$HOME/${RELAY_HOOK}" '${hookPath(spec, source)}'${hold} ${MARKER}`;
 }
 
 /**
@@ -221,6 +236,8 @@ function installHooksFor(settings, port, specs, source, style = 'command') {
     group.hooks.push(
       style === 'http'
         ? { ...httpHook(spec, port, source), timeout }
+        : style === 'relay'
+        ? { type: 'command', command: relayCommand(spec, source), timeout }
         : { type: 'command', command: hookCommand(spec, port, source), timeout }
     );
   }
@@ -259,7 +276,8 @@ function collectOurs(settings) {
           found.push({
             event,
             matcher: group.matcher || '',
-            style: hook.type === 'http' ? 'http' : 'command',
+            style:
+              hook.type === 'http' ? 'http' : String(hook.command).includes(RELAY_HOOK) ? 'relay' : 'command',
             command: String(hook.type === 'http' ? hook.url : hook.command),
             headers: hook.type === 'http' ? Object.keys(hook.headers || {}) : [],
           });
@@ -307,13 +325,18 @@ function checkDriftFor(settings, port, specs, style = 'command') {
         h.style !== style ||
         !specs.find((spec) => spec.event === h.event && (spec.matcher || '') === h.matcher)
     ),
-    wrongPort: installed.some((h) => !h.command.includes(`127.0.0.1:${port}/`)),
+    // Relay hooks dial the relay, not Clippy, so they have no port to be wrong about.
+    wrongPort: installed.some((h) => h.style !== 'relay' && !h.command.includes(`127.0.0.1:${port}/`)),
     // Older installs don't report which terminal they ran in, so "open the
     // session's window" has nothing to aim at.
     // An http hook has no tty to report; what it can carry is the editor's
     // environment, and the first Windows build didn't send that yet.
     noTerminalInfo: installed.some((h) =>
-      h.style === 'command' ? !h.command.includes('X-Clippy-Tty') : !h.headers.includes('X-Clippy-Entrypoint')
+      h.style === 'command'
+        ? !h.command.includes('X-Clippy-Tty')
+        : h.style === 'http'
+        ? !h.headers.includes('X-Clippy-Entrypoint')
+        : false
     ),
   };
 }
@@ -430,17 +453,21 @@ function installToFiles({ port = DEFAULT_PORT, agents = ['claude', 'codex'], pat
 /* ---------------- CLI ---------------- */
 
 function parseArgs(argv) {
-  const args = { cmd: argv[0], port: DEFAULT_PORT, settings: null, agent: null };
+  const args = { cmd: argv[0], port: DEFAULT_PORT, settings: null, agent: null, style: null };
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '--port') args.port = Number(argv[++i]);
     else if (argv[i] === '--settings') args.settings = argv[++i];
     else if (argv[i] === '--agent') args.agent = argv[++i];
+    else if (argv[i] === '--style') args.style = argv[++i];
   }
   if (!Number.isInteger(args.port) || args.port < 1 || args.port > 65535) {
     throw new Error(`invalid --port`);
   }
   if (args.agent && !['claude', 'codex', 'openclaw', 'both'].includes(args.agent)) {
     throw new Error(`invalid --agent`);
+  }
+  if (args.style && !['command', 'http', 'relay'].includes(args.style)) {
+    throw new Error(`invalid --style`);
   }
   return args;
 }
@@ -542,15 +569,16 @@ function openclawTarget(settingsPath) {
   };
 }
 
-function targetFor(agent, settingsPath) {
+function targetFor(agent, settingsPath, style = null) {
   if (agent === 'openclaw') return openclawTarget(settingsPath);
+  const opts = style ? { style } : {};
   return {
     agent,
     settingsPath,
-    install: agent === 'codex' ? installCodexHooks : installHooks,
+    install: agent === 'codex' ? installCodexHooks : (settings, port) => installHooks(settings, port, opts),
     uninstall: uninstallHooks,
     list: listInstalled,
-    drift: agent === 'codex' ? checkCodexDrift : checkDrift,
+    drift: agent === 'codex' ? checkCodexDrift : (settings, port) => checkDrift(settings, port, opts),
   };
 }
 
@@ -565,11 +593,11 @@ function main() {
       ? ['claude']
       : defaultAgents();
   const targets = selected.map((agent) =>
-    targetFor(agent, args.settings || settingsPathFor(agent))
+    targetFor(agent, args.settings || settingsPathFor(agent), args.style)
   );
 
   if (!['install', 'uninstall', 'status'].includes(args.cmd)) {
-    console.log('usage: clippy-hooks.js <install|uninstall|status> [--port N] [--agent claude|codex|openclaw|both] [--settings PATH]');
+    console.log('usage: clippy-hooks.js <install|uninstall|status> [--port N] [--agent claude|codex|openclaw|both] [--settings PATH] [--style command|http|relay]');
     process.exit(args.cmd ? 1 : 0);
   }
 
@@ -613,7 +641,9 @@ function main() {
     }
   }
 
-  if (args.cmd === 'install') {
+  if (args.cmd === 'install' && args.style === 'relay') {
+    console.log('Hooks report to the Clippy relay on this machine (started on demand).');
+  } else if (args.cmd === 'install') {
     console.log(`Hooks report to http://127.0.0.1:${args.port} — start the app with: npm start`);
     console.log('Restart running agent sessions; in Codex, open /hooks and trust the new hooks.');
     if (targets.some((t) => t.agent === 'openclaw')) {
@@ -646,6 +676,7 @@ module.exports = {
   defaultHookStyle,
   hookCommand,
   httpHook,
+  relayCommand,
   HTTP_MARKER_HEADER,
   SPECS,
   CODEX_SPECS,
