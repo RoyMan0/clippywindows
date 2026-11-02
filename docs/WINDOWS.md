@@ -29,50 +29,58 @@ behaviour is unchanged.
 
 When VS Code is connected to another machine (a NAS through a Remote Tunnel,
 say), the Claude Code extension runs **on that machine**, so its hooks can't
-reach Clippy on your computer. A small relay bridges the gap, through the
-tunnel you are already using, from home or anywhere else:
+reach Clippy on your computer. Two small VS Code extensions bridge the gap
+over the connection VS Code already has open, from home or anywhere else:
 
 ```
-Claude Code (remote) ─▶ hook.sh ─▶ relay on the remote's 127.0.0.1:43118
-                                        │ VS Code forwards port 43118
-Clippy (your computer) ◀── long-poll ───┘
+Claude Code (remote) ─▶ hook.sh ─▶ Clippy Bridge (remote) on the remote's 127.0.0.1:43118
+                                        │  VS Code's own connection (a command call)
+Clippy (your computer) ◀── 127.0.0.1:43117 ◀── Clippy Bridge (local)
 ```
 
-- Nothing listens on the network at either end — both are loopback-only, and
-  VS Code's port forwarding (inside the tunnel, private to you) joins them.
-- Every request carries a private key that Clippy generates; other accounts or
-  containers on the remote machine can't inject events or answer prompts.
-- The relay is started by Claude Code's first hook and **stops itself after 30
-  idle minutes**, so it only runs while you're using Claude there.
-- When Clippy isn't connected (VS Code closed, PC asleep), hooks get no
-  decision straight away and VS Code shows its normal prompt.
+- No port forwarding and nothing reachable from the network: both ends are
+  loopback-only, and the hop between them is VS Code calling one extension
+  from the other.
+- The bridge only exists while a VS Code window is connected to that machine.
+  With no window connected the hooks pass instantly and Claude Code behaves as
+  if Clippy weren't there.
+- A private key on the remote machine (`~/.clippy-relay/key`, readable by you
+  only) stops other accounts or containers there from talking to the bridge.
 
-### Set it up (once per remote machine)
+### Set it up
 
-1. Clippy tray menu → **🌐 Use with a remote machine…** → **Copy setup command**.
-2. In VS Code, connected to the remote machine, open a terminal and paste/run
-   it. It downloads three small files from this repo into `~/.clippy-relay`
-   (read them first if you like: `relay/install.sh`, `relay/hook.sh`,
-   `relay/clippy-relay.js`), stores the key, and adds Clippy's hooks to that
-   machine's `~/.claude/settings.json`. It uses the Node.js VS Code already
-   installed there.
-3. Reload the VS Code window.
-4. Use Claude once. The relay starts, VS Code forwards port 43118 (check the
-   **Ports** panel; if it isn't there, **Forward a Port → 43118**), and the
-   tray shows **🌐 Remote relay: connected** within a few seconds.
+1. **Extensions** (once per computer you use VS Code on). Download the
+   `clippy-windows-installer` artifact (it contains `clippy-bridge-ui.vsix` and
+   `clippy-bridge-remote.vsix` next to the installer). In VS Code, **while
+   connected to the remote machine**: Extensions view → `⋯` menu → **Install
+   from VSIX…** → pick `clippy-bridge-ui.vsix`; repeat for
+   `clippy-bridge-remote.vsix` (VS Code installs it on the remote machine).
+2. **Hooks** (once per remote machine). Clippy tray → **🌐 Use with a remote
+   machine…** → **Copy setup command**, then run it in a VS Code terminal on
+   the remote machine:
 
-The very first prompt after connecting may still appear in VS Code: the relay
-starts on that hook, and Clippy connects a moment later.
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/RoyMan0/clippywindows/windows-support/relay/install.sh | sh
+   ```
 
-To remove it from the remote machine: `sh ~/.clippy-relay/install.sh --uninstall`.
-To turn it off in Clippy: the same tray item → **Turn off**.
+   It downloads `hook.sh`, `install.sh` and `clippy-hooks.js` from this repo
+   into `~/.clippy-relay` (read them first if you like), creates the key, and
+   adds Clippy's hooks to that machine's `~/.claude/settings.json`.
+3. **Reload the VS Code window.**
+
+Check it: Command Palette → **Clippy Bridge: Status**. It should say
+*listening* and *installed, Clippy is running*; the **Clippy Bridge** output
+channel logs anything that goes wrong.
+
+To remove the hooks from the remote machine:
+`sh ~/.clippy-relay/install.sh --uninstall`, then uninstall the two extensions.
 
 Limits: Clippy can't read Claude's conversation files on the other machine, so
 the context meter is empty for remote sessions and the end-of-turn card uses
-the summary Claude Code sends with the event. If VS Code forwards to a local
-port other than 43118 (because 43118 was taken), Clippy won't find it yet.
-On a Mac the relay works too, but "go to VS Code" can't pick the window for a
-remote session yet.
+the summary Claude Code sends with the event. With two VS Code windows on the
+same remote machine, the first one carries every session's events (they all
+go to the same Clippy anyway). On a Mac the bridge works too, but "go to VS
+Code" can't pick the window for a remote session yet.
 
 ## Not on Windows yet
 

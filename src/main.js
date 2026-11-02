@@ -73,7 +73,6 @@ const { startCompletionPoll, coalesceAsync } = require('./async-control');
 const { createOutbox } = require('./outbox');
 const { createFocusProbe, looksFocused } = require('./frontmost');
 const { winWindows } = require('./win-windows');
-const { RelayClient } = require('./relay-client');
 const { describeSource } = require('./source-app');
 const { routingPrompt, parseChoice, routable } = require('./delegate');
 
@@ -2797,97 +2796,36 @@ function showUsageFor(key) {
   showBuddy(key, { pin: true });
 }
 
-/* ---------------- Remote machines (the relay) ---------------- */
+/* ---------------- Remote machines (the VS Code bridge) ---------------- */
 
 /**
  * When VS Code is connected to another machine (Remote Tunnel or SSH), Claude
- * Code runs there and its hooks can't reach this computer. The relay on that
- * machine collects them and VS Code forwards its port here; see
- * relay/clippy-relay.js and src/relay-client.js.
- *
- * The key lives in its own file beside the settings, like Athena's token:
- * the settings are sent to every window, and the key has no business there.
+ * Code runs there and its hooks can't reach this computer. Two small VS Code
+ * extensions carry them over VS Code's own connection (vscode/), and they
+ * arrive at the ordinary hook server like any local hook — so Clippy itself
+ * needs nothing beyond telling people how to set it up.
  */
-const RELAY_DEFAULT_PORT = 43118;
-const RELAY_INSTALL_URL =
-  'https://raw.githubusercontent.com/RoyMan0/clippywindows/windows-support/relay/install.sh';
-let relayConfig = null; // { key, port }
-let relayClient = null;
-let relayConnected = false;
+const REMOTE_SETUP_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/RoyMan0/clippywindows/windows-support/relay/install.sh | sh';
+const REMOTE_HELP_URL = 'https://github.com/RoyMan0/clippywindows/blob/windows-support/docs/WINDOWS.md#remote-machines-vs-code-remote-tunnel--remote-ssh';
 
-const relayFile = () => path.join(app.getPath('userData'), 'relay.json');
-
-function loadRelayConfig() {
-  try {
-    const saved = JSON.parse(fs.readFileSync(relayFile(), 'utf8'));
-    const port = Number(saved.port) || RELAY_DEFAULT_PORT;
-    relayConfig =
-      typeof saved.key === 'string' && /^[A-Za-z0-9_-]{20,}$/.test(saved.key) && port > 0 && port < 65536
-        ? { key: saved.key, port }
-        : null;
-  } catch {
-    relayConfig = null;
-  }
-  return relayConfig;
-}
-
-function saveRelayConfig(config) {
-  fs.mkdirSync(path.dirname(relayFile()), { recursive: true });
-  fs.writeFileSync(relayFile(), JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-  relayConfig = config;
-}
-
-function startRelayClient() {
-  if (relayClient || !relayConfig) return;
-  relayClient = new RelayClient({
-    config: () => relayConfig,
-    onEvent: handleHookEvent,
-    onStatus: (connected) => {
-      relayConnected = connected;
-      console.log(`clippy: remote relay ${connected ? 'connected' : 'not connected'} (127.0.0.1:${relayConfig?.port})`);
-      updateTray();
-    },
-  });
-  relayClient.start();
-}
-
-function stopRelayClient() {
-  relayClient?.stop();
-  relayClient = null;
-  relayConnected = false;
-}
-
-const relaySetupCommand = (config) => `curl -fsSL ${RELAY_INSTALL_URL} | sh -s -- ${config.key}`;
-
-async function showRelaySetup() {
-  const fresh = !relayConfig;
-  if (fresh) saveRelayConfig({ key: crypto.randomBytes(24).toString('base64url'), port: RELAY_DEFAULT_PORT });
-  startRelayClient();
-  const status = relayConnected
-    ? 'Status: connected.'
-    : `Status: not connected yet — Clippy is looking for the relay on 127.0.0.1:${relayConfig.port}.`;
+async function showRemoteSetup() {
   const { response } = await dialog.showMessageBox({
     type: 'info',
     message: 'Use Clippy with a remote machine',
     detail:
       'For VS Code Remote Tunnel or Remote-SSH sessions, where Claude Code runs on the other machine.\n\n' +
-      '1. Copy the setup command and run it once in a VS Code terminal on that machine.\n' +
-      '2. Reload the VS Code window.\n' +
-      `3. Make sure VS Code forwards port ${relayConfig.port} (it usually does this by itself; ` +
-      `otherwise Ports panel → Forward a Port → ${relayConfig.port}).\n\n` +
-      'The command contains a private key: it lets that machine talk to this Clippy, so don\u2019t share it.\n\n' +
-      status,
-    buttons: ['Copy setup command', 'Close', 'Turn off'],
+      '1. Install both Clippy Bridge extensions in VS Code (the .vsix files that come with this ' +
+      'Windows build): Extensions view → ⋯ → Install from VSIX.\n' +
+      '2. Copy the setup command and run it once in a VS Code terminal on the remote machine.\n' +
+      '3. Reload the VS Code window.\n\n' +
+      'No ports to forward: the extensions use VS Code\u2019s own connection.',
+    buttons: ['Copy setup command', 'Open instructions', 'Close'],
     defaultId: 0,
-    cancelId: 1,
+    cancelId: 2,
   });
-  if (response === 0) clipboard.writeText(relaySetupCommand(relayConfig));
-  if (response === 2) {
-    stopRelayClient();
-    fs.rmSync(relayFile(), { force: true });
-    relayConfig = null;
-    updateTray();
-  }
+  if (response === 0) clipboard.writeText(REMOTE_SETUP_COMMAND);
+  if (response === 1) shell.openExternal(REMOTE_HELP_URL);
 }
 
 function trayMenu() {
@@ -2978,14 +2916,7 @@ function trayMenu() {
           { type: 'separator' },
         ]
       : []),
-    {
-      label: relayConfig
-        ? relayConnected
-          ? '🌐 Remote relay: connected'
-          : '🌐 Remote relay: waiting for VS Code…'
-        : '🌐 Use with a remote machine…',
-      click: showRelaySetup,
-    },
+    { label: '🌐 Use with a remote machine…', click: showRemoteSetup },
     { label: `Hook server: 127.0.0.1:${PORT}`, enabled: false },
     {
       label: 'Restart Clippy',
@@ -4487,7 +4418,6 @@ app.whenReady().then(async () => {
   }
 
   loadSettings();
-  if (loadRelayConfig()) startRelayClient();
   spawned.load(settings.spawnedSessions);
   warnOnHookDrift();
   createTray();

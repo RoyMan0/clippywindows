@@ -37,5 +37,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --test test/win-windows.test.js test/server.test.js test/relay.test.js
+      - run: node --test test/win-windows.test.js test/server.test.js test/bridge.test.js
       - run: node scripts/win-helper-smoke.js

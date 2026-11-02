@@ -1,0 +1,25 @@
+{
+  "name": "clippy-bridge-ui",
+  "displayName": "Clippy Bridge (local)",
+  "description": "The half of the Clippy bridge that runs on your computer: hands Claude Code events from a remote machine to Clippy. Install together with Clippy Bridge (remote).",
+  "version": "0.1.0",
+  "publisher": "clippywindows",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/RoyMan0/clippywindows" },
+  "engines": { "vscode": "^1.80.0" },
+  "extensionKind": ["ui"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished", "onCommand:clippyBridge.deliver", "onCommand:clippyBridge.ping"],
+  "contributes": {
+    "configuration": {
+      "title": "Clippy Bridge",
+      "properties": {
+        "clippyBridge.clippyPort": {
+          "type": "number",
+          "default": 43117,
+          "description": "The port Clippy's hook server listens on, on this computer."
+        }
+      }
+    }
+  }
+}

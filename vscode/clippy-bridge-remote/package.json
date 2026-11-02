@@ -1,0 +1,27 @@
+{
+  "name": "clippy-bridge-remote",
+  "displayName": "Clippy Bridge (remote)",
+  "description": "Carries Claude Code hook events from a remote machine (Remote Tunnel / SSH) to Clippy on your computer. Install together with Clippy Bridge (local).",
+  "version": "0.1.0",
+  "publisher": "clippywindows",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/RoyMan0/clippywindows" },
+  "engines": { "vscode": "^1.80.0" },
+  "extensionKind": ["workspace"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [{ "command": "clippyBridge.remoteStatus", "title": "Clippy Bridge: Status" }],
+    "configuration": {
+      "title": "Clippy Bridge",
+      "properties": {
+        "clippyBridge.port": {
+          "type": "number",
+          "default": 43118,
+          "scope": "machine",
+          "description": "Loopback port on the remote machine that Claude Code's Clippy hooks post to."
+        }
+      }
+    }
+  }
+}

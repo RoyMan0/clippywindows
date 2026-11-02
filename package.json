@@ -37,6 +37,7 @@
     "package": "node scripts/package-app.js",
     "package:release": "node scripts/package-app.js --require-release-signing",
     "package:win": "node scripts/package-win.js",
+    "package:bridge": "cd vscode/clippy-bridge-ui && npx --yes @vscode/vsce@3 package --no-dependencies -o ../../dist/clippy-bridge-ui.vsix && cd ../clippy-bridge-remote && npx --yes @vscode/vsce@3 package --no-dependencies -o ../../dist/clippy-bridge-remote.vsix",
     "verify:release": "node scripts/verify-release.js",
     "add-sprite-pack": "node scripts/add-sprite-pack.js",
     "mock-session": "node scripts/mock-session.js",

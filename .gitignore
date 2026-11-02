@@ -32,3 +32,6 @@ website/
 
 # Windows installer build resources (drawn by scripts/package-win.js)
 build/
+
+# Built VS Code bridge extensions
+vscode/*.vsix
