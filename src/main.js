@@ -137,6 +137,10 @@ const settings = {
   // getting in the way of the thing it exists to help with. Held cards are
   // handed straight back to that window instead of being kept here.
   quietWhenFocused: true,
+  // A system notification alongside the buddy. On by default on the Mac, where
+  // it lands quietly in Notification Center; off on Windows, where a toast
+  // sliding in on top of the buddy for every card is the same news twice.
+  systemNotifications: process.platform !== 'win32',
   appearanceSound: 'pop', // short cue when a hidden buddy appears; '' is silent
   characterByProject: {}, // project name -> character id, when you've picked one
   sizeByProject: {}, // project name -> size id, likewise
@@ -636,6 +640,7 @@ function organizeBuddies(edge) {
     // From here the lineup spot outranks the corner, exactly like a hand move:
     // cards and menus grow around it instead of snapping back.
     buddy.dragged = true;
+    buddy.keepSpot = true; // and it holds across cards, like a hand move
     rehome(buddy); // a lineup is an explicit "stand here", not a resize
     const [ownW, ownH] = compactSize(buddy);
     // Park the compact footprint on the spot, then let placeBuddy re-grow any
@@ -711,6 +716,25 @@ function draggedSpot(buddy, width, height, workArea) {
     workArea,
     buddy
   );
+}
+
+/**
+ * He was put here by hand: from now on this spot outranks the corner and the
+ * perch, and the next card appears here too. Only "go to …" (which means "take
+ * me to that window") clears it.
+ *
+ * Called from the drag itself as well as from the window's 'moved' event:
+ * Electron only reports a programmatic move as 'moved' on macOS, so on Windows
+ * the hand-rolled drag below never said so, and every card snapped him back.
+ */
+function markHandPlaced(buddy) {
+  if (!buddy || buddy.win.isDestroyed()) return;
+  buddy.dragged = true;
+  buddy.keepSpot = true;
+  // Carried by hand: wherever he was put is where he now lives, so the anchor
+  // follows rather than pulling him back.
+  const at = anchorPointOf(buddy, buddy.win.getBounds());
+  if (at) buddy.anchorAt = at;
 }
 
 function nextFreeSlot() {
@@ -834,11 +858,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     const [x, y] = win.getPosition();
     const placed = b.lastPlaced;
     if (placed && x === placed.x && y === placed.y) return;
-    b.dragged = true;
-    // Carried by hand: wherever he was put is where he now lives, so the
-    // anchor follows rather than pulling him back.
-    const dragged = anchorPointOf(b, { ...win.getBounds(), x, y });
-    if (dragged) b.anchorAt = dragged;
+    markHandPlaced(b);
   });
 
   const buddy = {
@@ -859,6 +879,7 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     pinned: false,
     dock: null,
     dragged: false, // moved by hand — placeBuddy grows around that spot instead
+    keepSpot: false, // …and stays there across cards, until "go to …" or Organize
     lastPlaced: { x, y }, // matches the constructor's own placement, above
     // Cast once, when this session first reports in, and only re-cast when you
     // give the project a buddy by hand.
@@ -1100,7 +1121,13 @@ function showBuddy(key, { pin = false, mode = 'full' } = {}) {
 
   // Perched or not, Clippy is a small paperclip until there's a card or a
   // message to read — then the window grows around him.
-  if (buddy.dock || !settings.autoPerch || buddy.win.isVisible() || !tracker.terminalFor(key)) {
+  if (
+    buddy.dock ||
+    buddy.keepSpot ||
+    !settings.autoPerch ||
+    buddy.win.isVisible() ||
+    !tracker.terminalFor(key)
+  ) {
     placeBuddy(buddy, mode);
     buddy.win.showInactive();
     return;
@@ -1183,7 +1210,12 @@ function placeBuddy(buddy, mode, wantHeight, wantWidth) {
   if (Number.isFinite(wantWidth)) buddy.wantWidth = wantWidth > 0 ? wantWidth : 0;
   const compact = mode === 'compact';
   const [compactW, compactH] = compactSize(buddy);
-  const workArea = buddy.dock
+  // A hand-placed buddy lives on whichever display he was put on; measuring
+  // him against the primary one pulled him back across the moment a card
+  // made his window grow.
+  const workArea = buddy.dragged
+    ? screen.getDisplayMatching(buddy.win.getBounds()).workArea
+    : buddy.dock
     ? screen.getDisplayMatching(buddy.dock.bounds).workArea
     : screen.getPrimaryDisplay().workArea;
   const width = compact
@@ -1377,6 +1409,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
       buddy.dock.auto = false; // now it's a perch you asked for
       buddy.pinned = true;
       buddy.dragged = false; // "go to terminal" means go back to the perch
+      buddy.keepSpot = false;
       const { bounds } = await revealTarget(buddy, key);
       if (bounds) {
         buddy.dock.bounds = bounds;
@@ -1436,7 +1469,10 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     buddy.dock = dock;
     rehome(buddy); // the perch decides where he sits, not where he was
     if (!auto) buddy.pinned = true; // asked for by hand -> stays until dismissed
-    if (raise) buddy.dragged = false; // asked to go to the terminal -> that's where he goes
+    if (raise) {
+      buddy.dragged = false; // asked to go to the terminal -> that's where he goes
+      buddy.keepSpot = false;
+    }
     // A held card needs the full window; a quiet perch is just the paperclip.
     placeBuddy(buddy, mode || (broker.hasPending(key) ? 'full' : 'compact'));
     buddy.win.showInactive();
@@ -1772,7 +1808,9 @@ function undock(buddy) {
   stopWalking(buddy);
   buddy.dock.poll?.cancel();
   buddy.dock = null;
-  buddy.dragged = false; // letting go is its own fresh start, back in the corner
+  // Letting go is its own fresh start, back in the corner — unless you put him
+  // somewhere yourself, in which case that is where he goes back to.
+  buddy.dragged = Boolean(buddy.keepSpot);
   placeBuddy(buddy, buddy.mode || 'compact');
 }
 
@@ -3047,6 +3085,12 @@ function globalSettingsMenu() {
       click: (item) => setSetting('autoPerch', item.checked),
     },
     {
+      label: process.platform === 'win32' ? 'Also show a Windows notification' : 'Also show a system notification',
+      type: 'checkbox',
+      checked: settings.systemNotifications,
+      click: (item) => setSetting('systemNotifications', item.checked),
+    },
+    {
       label: "Stay quiet when I'm already in that window",
       type: 'checkbox',
       checked: settings.quietWhenFocused,
@@ -3121,7 +3165,7 @@ function updateTray() {
 }
 
 function notify(title, body, { silent = true, sessionId, open = 'buddy' } = {}) {
-  if (!Notification.isSupported()) return;
+  if (!settings.systemNotifications || !Notification.isSupported()) return;
   const n = new Notification({ title, body, silent });
   n.on('click', () => {
     if (open === 'terminal') openSessionWindow(sessionId, { point: true });
@@ -4802,9 +4846,12 @@ app.whenReady().then(async () => {
     };
     // He may be carried until his own edge meets the edge of the screen — the
     // window is welcome to hang off it — but never past that and out of reach.
-    const { workArea } = screen.getDisplayMatching(at);
+    // The display under the pointer, not the one he started on: clamping to
+    // his own display is what stopped him ever being carried to a second one.
+    const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const spot = keepBuddyOnScreen(wanted, workArea, buddy);
     buddy.win.setPosition(spot.x, spot.y);
+    markHandPlaced(buddy);
     // Carried across the middle of the screen: where he'll settle has changed.
     sendSide(buddy);
   });

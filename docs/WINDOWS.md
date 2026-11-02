@@ -82,6 +82,16 @@ same remote machine, the first one carries every session's events (they all
 go to the same Clippy anyway). On a Mac the bridge works too, but "go to VS
 Code" can't pick the window for a remote session yet.
 
+## Behaviour differences on Windows
+
+- **No Windows notification by default.** On the Mac each card also lands in
+  Notification Center; on Windows a toast on top of the buddy was the same
+  news twice. Turn it back on from the tray: Quick settings → **Also show a
+  Windows notification**.
+- **Drag the buddy anywhere, on any monitor**, and it stays there for the
+  following cards instead of jumping back to the session window's corner.
+  **Go to VS Code ↗** (or Organize buddies) puts it back on automatic.
+
 ## Not on Windows yet
 
 - Starting agents from Clippy (needs tmux, which Windows doesn't have).
