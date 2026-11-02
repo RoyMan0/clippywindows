@@ -154,6 +154,10 @@ const settings = {
   soloCharacter: '',
   size: 'medium', // how big Clippy is drawn
   arrangeEdge: '', // screen edge new buddies line up on; '' = the classic corner
+  // Where you last put the buddy by hand — his bottom-centre point, which is
+  // what stays still while his window grows and shrinks — so he comes back
+  // there after a restart. null = no hand-placed spot (corner / perch / edge).
+  handSpot: null,
   // …and the sessions Clippy starts itself (see spawnAgent).
   defaultAgent: 'claude', // which agent a recent project re-opens with
   attachTerminal: 'terminal', // where "attach in terminal" opens the session
@@ -188,6 +192,7 @@ const spawnableAgent = (id) => (Object.hasOwn(tmux.SPAWNABLE, String(id)) ? Stri
 // casting maps, a leftover from when a session could be dressed on its own —
 // still read by characterFor, no longer written by anyone.
 const MANAGED = [
+  'handSpot',
   'characterByProject',
   'sizeByProject',
   'characterBySession',
@@ -628,6 +633,7 @@ function homeBounds(slot, width, height) {
  */
 function organizeBuddies(edge) {
   settings.arrangeEdge = edge;
+  settings.handSpot = null; // the edge itself is what's remembered now
   saveSettings();
   const free = [...buddies.values()].filter((b) => !b.dock && !b.win.isDestroyed());
   // Spots are laid out on the default footprint so the row stays evenly
@@ -733,8 +739,50 @@ function markHandPlaced(buddy) {
   buddy.keepSpot = true;
   // Carried by hand: wherever he was put is where he now lives, so the anchor
   // follows rather than pulling him back.
-  const at = anchorPointOf(buddy, buddy.win.getBounds());
+  const bounds = buddy.win.getBounds();
+  const at = anchorPointOf(buddy, bounds);
   if (at) buddy.anchorAt = at;
+  rememberHandSpot(bounds);
+}
+
+/**
+ * Keep the hand-placed spot for the next launch. A drag reports every few
+ * pixels, so the write waits until he has been still for a moment.
+ */
+let handSpotTimer = null;
+function rememberHandSpot(bounds) {
+  settings.handSpot = {
+    cx: Math.round(bounds.x + bounds.width / 2),
+    bottom: Math.round(bounds.y + bounds.height),
+  };
+  clearTimeout(handSpotTimer);
+  handSpotTimer = setTimeout(saveSettings, 600);
+  handSpotTimer.unref?.();
+}
+
+/** Back to automatic placement: forget the spot, now and for next time. */
+function forgetHandSpot(buddy) {
+  if (buddy) buddy.keepSpot = false;
+  if (settings.handSpot) {
+    settings.handSpot = null;
+    clearTimeout(handSpotTimer);
+    saveSettings();
+  }
+}
+
+/**
+ * Where a new buddy window should open, if you had put him somewhere by hand
+ * before — or null. A spot on a monitor that is no longer connected is
+ * ignored rather than opening him off screen.
+ */
+function savedHandBounds(width, height) {
+  const spot = settings.handSpot;
+  if (!spot || !Number.isFinite(spot.cx) || !Number.isFinite(spot.bottom)) return null;
+  const onScreen = screen.getAllDisplays().some(({ workArea: a }) =>
+    spot.cx >= a.x && spot.cx < a.x + a.width && spot.bottom > a.y && spot.bottom <= a.y + a.height + 1
+  );
+  if (!onScreen) return null;
+  return { x: Math.round(spot.cx - width / 2), y: Math.round(spot.bottom - height) };
 }
 
 function nextFreeSlot() {
@@ -776,7 +824,10 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
   // No buddy object yet, but its name and session id are what a size is kept
   // against, and this window is created at that size.
   const [compactW, compactH] = compactSize({ name, sessionId: key });
-  const { x, y } = homeBounds(slot, compactW, compactH);
+  // The first buddy goes back where you last put him by hand; any others
+  // take the usual slots so they don't stack on top of him.
+  const handPlaced = slot === 0 ? savedHandBounds(compactW, compactH) : null;
+  const { x, y } = handPlaced || homeBounds(slot, compactW, compactH);
   const identity = identityFor(sharesWindow(key) ? SOLO_KEY : identityKey, name);
   const win = new BrowserWindow({
     width: compactW,
@@ -878,8 +929,8 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     agent: agent || 'claude',
     pinned: false,
     dock: null,
-    dragged: false, // moved by hand — placeBuddy grows around that spot instead
-    keepSpot: false, // …and stays there across cards, until "go to …" or Organize
+    dragged: Boolean(handPlaced), // moved by hand — placeBuddy grows around that spot instead
+    keepSpot: Boolean(handPlaced), // …and stays there across cards and restarts, until "go to …" or Organize
     lastPlaced: { x, y }, // matches the constructor's own placement, above
     // Cast once, when this session first reports in, and only re-cast when you
     // give the project a buddy by hand.
@@ -1409,7 +1460,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
       buddy.dock.auto = false; // now it's a perch you asked for
       buddy.pinned = true;
       buddy.dragged = false; // "go to terminal" means go back to the perch
-      buddy.keepSpot = false;
+      forgetHandSpot(buddy);
       const { bounds } = await revealTarget(buddy, key);
       if (bounds) {
         buddy.dock.bounds = bounds;
@@ -1471,7 +1522,7 @@ async function perchOn(key, { raise = false, auto = false, mode = null } = {}) {
     if (!auto) buddy.pinned = true; // asked for by hand -> stays until dismissed
     if (raise) {
       buddy.dragged = false; // asked to go to the terminal -> that's where he goes
-      buddy.keepSpot = false;
+      forgetHandSpot(buddy);
     }
     // A held card needs the full window; a quiet perch is just the paperclip.
     placeBuddy(buddy, mode || (broker.hasPending(key) ? 'full' : 'compact'));

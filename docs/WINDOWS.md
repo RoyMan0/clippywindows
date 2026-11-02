@@ -90,6 +90,7 @@ Code" can't pick the window for a remote session yet.
   Windows notification**.
 - **Drag the buddy anywhere, on any monitor**, and it stays there for the
   following cards instead of jumping back to the session window's corner.
+  It remembers that spot after a restart too (unless that monitor is gone).
   **Go to VS Code ↗** (or Organize buddies) puts it back on automatic.
 
 ## Not on Windows yet
