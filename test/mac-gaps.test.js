@@ -168,3 +168,19 @@ test('Cursor and other VS Code builds count as the editor', async () => {
   assert.equal(await editorFocused(null, 'gnarshare-working', { exec, titleNames }), true);
   assert.deepEqual(parseFrontEditor('a\tb\tc d\n'), { bundleId: 'a', name: 'b', title: 'c d' });
 });
+
+test('when titles cannot be read, Clippy is told which permission is missing', async () => {
+  const states = [];
+  const onTitle = (s) => states.push(s);
+  await editorFocused(null, 'p', { exec: said('com.microsoft.VSCode', 'Code', ''), titleNames, onTitle });
+  await editorFocused({ pid: 5, bundleId: 'com.microsoft.VSCode', name: 'Code' }, 'p', {
+    exec: async () => {
+      throw new Error('not authorised');
+    },
+    titleNames,
+    onTitle,
+  });
+  await editorFocused(null, 'p', { exec: said('com.microsoft.VSCode', 'Code', 'a — p'), titleNames, onTitle });
+  await editorFocused(null, 'p', { exec: said('com.apple.Safari', 'Safari', ''), titleNames, onTitle });
+  assert.deepEqual(states, ['accessibility', 'automation', 'ok'], 'another app in front says nothing either way');
+});

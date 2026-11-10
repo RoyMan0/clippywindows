@@ -3089,6 +3089,17 @@ function trayMenu() {
           { type: 'separator' },
         ]
       : []),
+    ...(windowTitleTrouble
+      ? [
+          {
+            label:
+              windowTitleTrouble === 'automation'
+                ? '⚠ Let Clippy read window titles (Automation → System Events)…'
+                : '⚠ Let Clippy read window titles (Accessibility)…',
+            click: fixWindowTitleAccess,
+          },
+        ]
+      : []),
     { label: '🌐 Use with a remote machine…', click: showRemoteSetup },
     { label: `Hook server: 127.0.0.1:${PORT}`, enabled: false },
     {
@@ -4258,7 +4269,10 @@ async function lookingAtIt(key) {
   if (term.program === 'vscode' || term.entrypoint === 'claude-vscode') {
     try {
       const { front } = await focusProbe.current();
-      return await editorFocused(front, path.basename(tracker.cwdFor(key) || ''), { titleNames });
+      return await editorFocused(front, path.basename(tracker.cwdFor(key) || ''), {
+        titleNames,
+        onTitle: noteWindowTitleAccess,
+      });
     } catch {
       return false;
     }
@@ -4302,6 +4316,28 @@ async function lookingAtItOnWindows(key, term) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Mac: can Clippy read the front window's title? It needs that to tell one VS
+ * Code window from another; without it, any VS Code window in front keeps a
+ * VS Code session quiet. 'accessibility' / 'automation' name the missing
+ * permission, and the tray offers the way to grant it; 'ok' clears it.
+ */
+let windowTitleTrouble = null;
+function noteWindowTitleAccess(state) {
+  const next = state === 'ok' ? null : state;
+  if (next === windowTitleTrouble) return;
+  windowTitleTrouble = next;
+  if (next) console.warn(`clippy: can't read window titles (${next}) — VS Code windows can't be told apart`);
+  updateTray();
+}
+
+const AUTOMATION_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation';
+
+function fixWindowTitleAccess() {
+  if (windowTitleTrouble === 'automation') shell.openExternal(AUTOMATION_PANE).catch(() => {});
+  else askForWindowAccess(null, { force: true });
 }
 
 function handleHookEvent(eventName, kind, payload, ctx) {

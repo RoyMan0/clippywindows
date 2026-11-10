@@ -34,7 +34,8 @@ the line is the original README; the original app and its signed DMG are at
 **Text on cards reaches Claude** (Windows and Mac)
 - Words typed with **Allow** on an approval card come back to Claude with the
   tool's result (Claude Code's approve can't carry a message itself).
-- Question cards have an **Other…** box for your own answer.
+- Question cards have a box to add a note to the option you pick, or to type
+  your own answer instead.
 - Replying on a finished-turn card wakes Claude with the reply via a background
   Stop hook (`asyncRewake`), so it works with no terminal to type into.
 

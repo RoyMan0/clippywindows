@@ -290,16 +290,28 @@ function parseFrontEditor(stdout = '') {
  * @param {string} folder      the session's folder name
  * @param {object} opts        `exec` for tests; `titleNames` from win-windows
  */
-async function editorFocused(front, folder, { exec = run, titleNames } = {}) {
+async function editorFocused(front, folder, { exec = run, titleNames, onTitle = () => {} } = {}) {
   let seen = null;
   try {
     seen = parseFrontEditor(await exec(OSASCRIPT, ['-e', FRONT_EDITOR_SCRIPT]));
   } catch {
     seen = null;
   }
-  if (!seen || (!seen.bundleId && !seen.name)) return isEditorApp(front);
+  if (!seen || (!seen.bundleId && !seen.name)) {
+    // System Events said no (Automation not allowed): app-level only.
+    if (isEditorApp(front)) onTitle('automation');
+    return isEditorApp(front);
+  }
   if (!isEditorApp(seen)) return false;
-  if (!seen.title || !folder || !titleNames) return true;
+  if (!folder || !titleNames) return true;
+  if (!seen.title) {
+    // An editor with no readable title: Accessibility isn't granted (or is
+    // stale). Quiet, so it never pops up over the project being worked on —
+    // but it can't tell this project's window from another one's.
+    onTitle('accessibility');
+    return true;
+  }
+  onTitle('ok');
   return titleNames(seen.title, folder);
 }
 

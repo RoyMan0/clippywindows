@@ -13,7 +13,8 @@ it.
   - *Approval card:* words typed with **Deny** are Claude's reason, as
     before; words typed with **Allow** now come back to Claude with the
     tool's result.
-  - *Question card:* each question has an **Other…** box for your own answer.
+  - *Question card:* each question has a box to add a note to the answer you
+    pick ("Yes — but only to staging"), or to type your own answer instead.
   - *Finished card:* a reply to a VS Code session wakes Claude with it, via a
     background Stop hook (Claude Code's `asyncRewake`) that waits up to 30
     minutes after each turn and ends quietly if you click *looks good* or type
@@ -51,6 +52,16 @@ it.
    Code windows so they pick the new hooks up.
 6. For VS Code tunnels: install both `.vsix` files in VS Code (Extensions →
    ⋯ → Install from VSIX…) while connected to the remote machine.
+7. **Permissions, after every new test build.** Clippy reads the front
+   window's title to tell your VS Code windows apart (so it stays quiet over
+   *this* project's window but still alerts you while you're in another one).
+   That needs **Accessibility** (System Settings → Privacy & Security →
+   Accessibility → *Clippy for Claude Code*), and macOS asking once to let it
+   control **System Events** — allow it. These test builds aren't signed, so
+   macOS treats each new one as a different app: after installing a new build,
+   switch Clippy **off and on again** in the Accessibility list, even if it
+   already looks on. If Clippy can't read titles, its 📎 menu shows
+   **⚠ Let Clippy read window titles…**, which opens the right pane.
 
 ## Test checklist
 

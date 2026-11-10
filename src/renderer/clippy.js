@@ -2284,8 +2284,9 @@ function pageCards(by) {
 
 // answers map for the active answer card: questionText -> label | [labels]
 let answerState = {};
-// What was typed in each question's "Other…" box. Claude's own picker always
-// offers one; an answer is free text to Claude either way.
+// What was typed in each question's note box. With a button chosen it rides
+// along as a note on that answer; with none, it is the answer — Claude's own
+// picker offers "Other" the same way. Free text to Claude either way.
 let otherState = {};
 
 function renderAnswerOptions(req) {
@@ -2317,9 +2318,6 @@ function renderAnswerOptions(req) {
           answerState[q.question] = opt.label;
           [...group.querySelectorAll('.opt')].forEach((b) => b.classList.remove('chosen'));
           btn.classList.add('chosen');
-          // Picking a button over a typed answer: the button wins.
-          other.value = '';
-          otherState[q.question] = '';
         }
         btnSubmit.disabled = !answersComplete();
       });
@@ -2328,15 +2326,10 @@ function renderAnswerOptions(req) {
     const other = document.createElement('input');
     other.type = 'text';
     other.className = 'opt-other';
-    other.placeholder = 'Other… (type your own answer)';
+    other.placeholder = 'Add a note, or type your own answer…';
     other.spellcheck = true;
     other.addEventListener('input', () => {
       otherState[q.question] = other.value;
-      // Typing a single-choice answer replaces the button choice.
-      if (!q.multiSelect && other.value.trim()) {
-        answerState[q.question] = null;
-        [...group.querySelectorAll('.opt')].forEach((b) => b.classList.remove('chosen'));
-      }
       btnSubmit.disabled = !answersComplete();
     });
     other.addEventListener('keydown', (e) => {
@@ -2352,12 +2345,17 @@ function renderAnswerOptions(req) {
   btnSubmit.disabled = !answersComplete();
 }
 
-/** Each question's answer: the chosen button(s), plus or instead of typed text. */
+/**
+ * Each question's answer: the chosen button, with whatever was typed added as
+ * a note ("Yes — but only on staging"); or the typed text alone when no button
+ * was chosen. A multi-choice question adds the text as one more entry.
+ */
 function finalAnswers() {
   const out = {};
   for (const [question, chosen] of Object.entries(answerState)) {
     const typed = String(otherState[question] || '').trim();
     if (Array.isArray(chosen)) out[question] = typed ? [...chosen, typed] : chosen;
+    else if (chosen && typed) out[question] = `${chosen} — ${typed}`;
     else out[question] = typed || chosen;
   }
   return out;
