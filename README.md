@@ -1,8 +1,73 @@
 # 📎 Clippy for Claude Code + Codex
 
-By [AI Socratic](https://aisocratic.org).
+Originally by [AI Socratic](https://aisocratic.org).
 
-> **This fork adds Windows support, VS Code Remote Tunnel / SSH sessions, and fixes that apply to the Mac too** — see [docs/WINDOWS.md](docs/WINDOWS.md) and [docs/MAC.md](docs/MAC.md). The DMG link below is the original app; this fork's Mac build is described in docs/MAC.md.
+## About this fork
+
+This is a fork of [AI Socratic's Clippy](https://github.com/AISocratic/clippy)
+that adds **Windows support**, support for **VS Code Remote Tunnel / Remote-SSH
+sessions**, and a set of fixes that apply on the **Mac** too. Everything below
+the line is the original README; the original app and its signed DMG are at
+[AISocratic/clippy](https://github.com/AISocratic/clippy).
+
+### What it adds
+
+**Windows**
+- Runs on Windows 10/11 and sits in the system tray, with a Windows installer.
+- Installs Claude Code's own `http` hooks, so it works whether Claude Code runs
+  its hooks through Git Bash or PowerShell.
+- **Go to VS Code ↗** brings the session's own window forward — the one whose
+  title names the project folder when several are open — and the buddy can
+  perch on it and follow it, display scaling included.
+- "Stay quiet when I'm already in that window" compares the exact window.
+- Typing a follow-up works in Windows Terminal (never into VS Code, where keys
+  could land in an open file).
+- System notifications are off by default (the buddy already says it).
+
+**The VS Code extension, and remote machines**
+- Works with the **Claude Code VS Code extension**, not just the CLI.
+- **Remote Tunnel / Remote-SSH sessions**, where Claude Code runs on another
+  machine: two small VS Code extensions (*Clippy Bridge*) carry the hooks over
+  VS Code's own connection — no port forwarding, nothing exposed on the
+  network — and the stats panel shows that machine's usage.
+
+**Text on cards reaches Claude** (Windows and Mac)
+- Words typed with **Allow** on an approval card come back to Claude with the
+  tool's result (Claude Code's approve can't carry a message itself).
+- Question cards have an **Other…** box for your own answer.
+- Replying on a finished-turn card wakes Claude with the reply via a background
+  Stop hook (`asyncRewake`), so it works with no terminal to type into.
+
+**Buddy placement and look** (Windows and Mac)
+- Drag the buddy to any monitor; it stays where you put it across cards and
+  restarts.
+- **Quick settings → Show the name under the buddy** hides the name plate.
+
+**Fixes that apply to the original too**
+- The buddy couldn't be dragged to a second monitor, and a hand-placed buddy
+  was re-laid out against the primary display.
+- The Mac bundle left out `scripts/package-app.js`, which the tray icon and
+  custom buddies load.
+- Auto-update points at this fork's releases, so a fork build never replaces
+  itself with the original app.
+
+### Get it
+
+There are no signed releases yet. Builds come from this repository's
+**Actions** tab (sign in to GitHub to download artifacts):
+
+- **Windows:** *Windows installer* workflow → latest run → Artifacts →
+  `clippy-windows-installer` (installer + the two bridge `.vsix` files).
+  Unsigned, so SmartScreen warns on first run: *More info → Run anyway*.
+- **Mac (Apple silicon):** *macOS build* workflow → latest run → Artifacts →
+  `clippy-mac-build`. Unsigned and not notarized; see
+  [docs/MAC.md](docs/MAC.md) for the one-line quarantine fix.
+- Or run from source on either: `npm install && npm start`.
+
+Setup, remote machines and test checklists: [docs/WINDOWS.md](docs/WINDOWS.md)
+· [docs/MAC.md](docs/MAC.md).
+
+---
 
 **[Download the latest Apple-silicon DMG](https://github.com/AISocratic/clippy/releases/latest/download/Clippy-for-Claude-Code.dmg)** · [Compatibility](docs/COMPATIBILITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Privacy](docs/PRIVACY.md)
 
