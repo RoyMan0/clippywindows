@@ -5,7 +5,7 @@ name: Windows installer
 # (open the run → Artifacts → clippy-windows-installer).
 on:
   push:
-    branches: [windows-support]
+    branches: [main, windows-support]
   workflow_dispatch:
 
 permissions:

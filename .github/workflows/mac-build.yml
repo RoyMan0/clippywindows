@@ -10,7 +10,7 @@ name: macOS build
 #   xattr -dr com.apple.quarantine "/Applications/Clippy for Claude Code.app"
 on:
   push:
-    branches: [windows-support]
+    branches: [main, windows-support]
   workflow_dispatch:
 
 permissions:

@@ -60,7 +60,7 @@ Clippy (your computer) ◀── 127.0.0.1:43117 ◀── Clippy Bridge (local)
    the remote machine:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/RoyMan0/clippywindows/windows-support/relay/install.sh | sh
+   curl -fsSL https://raw.githubusercontent.com/RoyMan0/clippywindows/main/relay/install.sh | sh
    ```
 
    It downloads `hook.sh`, `install.sh` and `clippy-hooks.js` from this repo
@@ -136,7 +136,7 @@ it doesn't guess.
 1. In your fork on GitHub, open the **Actions** tab and enable workflows
    (GitHub turns them off on new forks).
 2. Open the **Windows installer** workflow → the latest run on
-   `windows-support` → **Artifacts** → download `clippy-windows-installer`.
+   `main` → **Artifacts** → download `clippy-windows-installer`.
    (Or press **Run workflow** to build one.)
 3. Unzip it and run `Clippy-for-Claude-Code-Setup-<version>.exe`. SmartScreen
    will say "Windows protected your PC": click **More info → Run anyway**.
@@ -148,7 +148,6 @@ You need [Node.js](https://nodejs.org) 18 or newer and Git.
 ```powershell
 git clone https://github.com/RoyMan0/clippywindows
 cd clippywindows
-git checkout windows-support
 npm install
 npm start
 ```

@@ -2979,8 +2979,8 @@ function showUsageFor(key) {
  * needs nothing beyond telling people how to set it up.
  */
 const REMOTE_SETUP_COMMAND =
-  'curl -fsSL https://raw.githubusercontent.com/RoyMan0/clippywindows/windows-support/relay/install.sh | sh';
-const REMOTE_HELP_URL = 'https://github.com/RoyMan0/clippywindows/blob/windows-support/docs/WINDOWS.md#remote-machines-vs-code-remote-tunnel--remote-ssh';
+  'curl -fsSL https://raw.githubusercontent.com/RoyMan0/clippywindows/main/relay/install.sh | sh';
+const REMOTE_HELP_URL = 'https://github.com/RoyMan0/clippywindows/blob/main/docs/WINDOWS.md#remote-machines-vs-code-remote-tunnel--remote-ssh';
 
 async function showRemoteSetup() {
   const { response } = await dialog.showMessageBox({

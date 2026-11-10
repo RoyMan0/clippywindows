@@ -13,7 +13,7 @@
 
 set -eu
 
-BASE="${CLIPPY_RELAY_BASE:-https://raw.githubusercontent.com/RoyMan0/clippywindows/windows-support}"
+BASE="${CLIPPY_RELAY_BASE:-https://raw.githubusercontent.com/RoyMan0/clippywindows/main}"
 DIR="$HOME/.clippy-relay"
 
 find_node() {
