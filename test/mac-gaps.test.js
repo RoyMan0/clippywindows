@@ -126,3 +126,45 @@ test('a remote session finds VS Code by its bundle, not by a process it lacks', 
   });
   assert.equal(await editorAppIn(new Map([[600, table.get(600)]])), null);
 });
+
+/* ---------------- "stay quiet" for VS Code sessions on the Mac ---------------- */
+
+const { editorFocused, parseFrontEditor } = require('../src/frontmost');
+const { titleNames } = require('../src/win-windows');
+
+const said = (bundleId, name, title) => async () => `${bundleId}\t${name}\t${title}\n`;
+
+test('the Mac stays quiet when this project\'s VS Code window is in front', async () => {
+  const exec = said('com.microsoft.VSCode', 'Code', 'server.js — gnarshare-working [Tunnel: Uder]');
+  assert.equal(await editorFocused(null, 'gnarshare-working', { exec, titleNames }), true);
+});
+
+test('another project\'s VS Code window does not silence this one', async () => {
+  const exec = said('com.microsoft.VSCode', 'Code', 'notes.md — other-project');
+  assert.equal(await editorFocused(null, 'gnarshare-working', { exec, titleNames }), false);
+});
+
+test('any other app in front means pop up', async () => {
+  const exec = said('com.apple.Safari', 'Safari', 'gnarshare-working - GitHub');
+  assert.equal(await editorFocused(null, 'gnarshare-working', { exec, titleNames }), false);
+});
+
+test('no window title (no Accessibility yet): the editor in front is enough', async () => {
+  const exec = said('com.microsoft.VSCode', 'Code', '');
+  assert.equal(await editorFocused(null, 'gnarshare-working', { exec, titleNames }), true);
+});
+
+test('System Events refused: falls back to the app lsappinfo saw', async () => {
+  const exec = async () => {
+    throw new Error('not authorised to send Apple events');
+  };
+  assert.equal(await editorFocused({ pid: 5, bundleId: 'com.microsoft.VSCode', name: 'Code' }, 'x', { exec, titleNames }), true);
+  assert.equal(await editorFocused({ pid: 6, bundleId: 'com.apple.Safari', name: 'Safari' }, 'x', { exec, titleNames }), false);
+  assert.equal(await editorFocused(null, 'x', { exec, titleNames }), false, 'not knowing never silences');
+});
+
+test('Cursor and other VS Code builds count as the editor', async () => {
+  const exec = said('com.todesktop.230313mzl4w4u92', 'Cursor', 'app.ts — gnarshare-working');
+  assert.equal(await editorFocused(null, 'gnarshare-working', { exec, titleNames }), true);
+  assert.deepEqual(parseFrontEditor('a\tb\tc d\n'), { bundleId: 'a', name: 'b', title: 'c d' });
+});

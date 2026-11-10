@@ -72,8 +72,8 @@ const { sendFeedback } = require('./feedback');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
 const { createOutbox } = require('./outbox');
-const { createFocusProbe, looksFocused } = require('./frontmost');
-const { winWindows } = require('./win-windows');
+const { createFocusProbe, looksFocused, editorFocused } = require('./frontmost');
+const { winWindows, titleNames } = require('./win-windows');
 const { describeSource } = require('./source-app');
 const { routingPrompt, parseChoice, routable } = require('./delegate');
 
@@ -4251,6 +4251,18 @@ async function lookingAtIt(key) {
   const term = tracker.terminalFor(key);
   if (!term) return false;
   if (process.platform === 'win32') return lookingAtItOnWindows(key, term);
+  // A VS Code session (the extension, its terminal, or a remote one through
+  // the bridge): judged like Windows does, by the front app being the editor
+  // and its front window's title naming the folder. The process-tree route
+  // below can't see a remote session at all, and was the fragile part here.
+  if (term.program === 'vscode' || term.entrypoint === 'claude-vscode') {
+    try {
+      const { front } = await focusProbe.current();
+      return await editorFocused(front, path.basename(tracker.cwdFor(key) || ''), { titleNames });
+    } catch {
+      return false;
+    }
+  }
   try {
     // Both at once: which app this session belongs to is a walk up the process
     // table, and it has to be known *before* deciding, or the first hook of a

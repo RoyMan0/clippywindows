@@ -229,7 +229,85 @@ function createFocusProbe({ exec = run, ttlMs = 400, now = Date.now } = {}) {
   };
 }
 
+/* ---------------- VS Code-family editors: by app id and window title ---------------- */
+
+/**
+ * The editors a VS Code session (the extension, its terminal, or a remote
+ * session through the bridge) can be in, by bundle id — with names as the
+ * fallback for a build whose id we haven't seen.
+ */
+const EDITOR_BUNDLES = new Set([
+  'com.microsoft.VSCode',
+  'com.microsoft.VSCodeInsiders',
+  'com.vscodium',
+  'com.todesktop.230313mzl4w4u92', // Cursor
+  'com.exafunction.windsurf',
+]);
+const EDITOR_NAMES = /^(Code|Visual Studio Code|Visual Studio Code - Insiders|Code - Insiders|Cursor|Windsurf|VSCodium)$/;
+
+const isEditorApp = (front) =>
+  Boolean(front) && (EDITOR_BUNDLES.has(front.bundleId) || EDITOR_NAMES.test(String(front.name || '')));
+
+/**
+ * The front app's bundle id and name, and its front window's title, in one
+ * System Events call (tab-separated). The title needs Accessibility, which
+ * Clippy asks for anyway to perch on windows; without it the title is empty
+ * and the app alone decides.
+ */
+const FRONT_EDITOR_SCRIPT = `tell application "System Events"
+  set p to first application process whose frontmost is true
+  set b to ""
+  set n to ""
+  set t to ""
+  try
+    set b to bundle identifier of p
+  end try
+  try
+    set n to name of p
+  end try
+  try
+    set t to name of front window of p
+  end try
+  return b & tab & n & tab & t
+end tell`;
+
+function parseFrontEditor(stdout = '') {
+  const [bundleId = '', name = '', title = ''] = String(stdout).replace(/\n$/, '').split('\t');
+  return { bundleId: bundleId.trim(), name: name.trim(), title: title.trim() };
+}
+
+/**
+ * Is the front window this VS Code session's own?
+ *
+ * The same rule Windows uses: the front app must be a VS Code-family editor,
+ * and its front window's title must name the session's folder — so a second
+ * VS Code window on another project doesn't silence this one. Asked of System
+ * Events directly; if that's refused, the lsappinfo answer (`front`) decides on
+ * the app alone. A title we can't read means the editor being in front is
+ * enough.
+ *
+ * @param {object|null} front  {pid, bundleId, name} from the shared probe
+ * @param {string} folder      the session's folder name
+ * @param {object} opts        `exec` for tests; `titleNames` from win-windows
+ */
+async function editorFocused(front, folder, { exec = run, titleNames } = {}) {
+  let seen = null;
+  try {
+    seen = parseFrontEditor(await exec(OSASCRIPT, ['-e', FRONT_EDITOR_SCRIPT]));
+  } catch {
+    seen = null;
+  }
+  if (!seen || (!seen.bundleId && !seen.name)) return isEditorApp(front);
+  if (!isEditorApp(seen)) return false;
+  if (!seen.title || !folder || !titleNames) return true;
+  return titleNames(seen.title, folder);
+}
+
 module.exports = {
+  isEditorApp,
+  editorFocused,
+  parseFrontEditor,
+  EDITOR_BUNDLES,
   parseAsn,
   parseAppInfo,
   bundleForProgram,
