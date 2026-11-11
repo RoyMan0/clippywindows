@@ -847,6 +847,10 @@ function buddyFor(key, name = '', agent = '', identityKey = key) {
     hasShadow: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    // macOS: a click on a buddy while another app is active should press the
+    // button, not just bring Clippy forward. Cards appear without taking focus,
+    // so without this the first click on "Yes" did nothing and needed a second.
+    acceptFirstMouse: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
