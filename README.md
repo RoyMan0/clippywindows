@@ -43,6 +43,13 @@ the line is the original README; the original app and its signed DMG are at
 - Drag the buddy to any monitor; it stays where you put it across cards and
   restarts.
 - **Quick settings → Show the name under the buddy** hides the name plate.
+- A click on a card works first time on the Mac (no activating click).
+
+**Staying quiet in the right window** (Windows and Mac)
+- Clippy stays quiet only when you're in the session's own VS Code window,
+  and alerts you from any other — the local bridge extension tells it which
+  window has focus, no macOS permission needed. `http://127.0.0.1:43117/status`
+  shows each decision and why.
 
 **Fixes that apply to the original too**
 - The buddy couldn't be dragged to a second monitor, and a hand-placed buddy
@@ -66,7 +73,8 @@ There are no signed releases yet. Builds come from this repository's
 - Or run from source on either: `npm install && npm start`.
 
 Setup, remote machines and test checklists: [docs/WINDOWS.md](docs/WINDOWS.md)
-· [docs/MAC.md](docs/MAC.md).
+· [docs/MAC.md](docs/MAC.md). Every problem this fork fixed — what it looked
+like, the cause, the fix and how it was checked: [docs/CHANGES.md](docs/CHANGES.md).
 
 ---
 
