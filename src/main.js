@@ -5398,6 +5398,12 @@ app.whenReady().then(async () => {
       })),
       ...(hookDrift ? { hookDrift } : {}),
       focusChecks,
+      // What each VS Code window last said about itself (the local bridge
+      // extension): what "stay quiet" decisions are made from.
+      editorWindows: [...editorWindows.values()].map((w) => ({
+        ...w,
+        secondsAgo: Math.round((Date.now() - w.at) / 1000),
+      })),
       ...(windowTitleTrouble ? { windowTitleTrouble } : {}),
     }),
   });
