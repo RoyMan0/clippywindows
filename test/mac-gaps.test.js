@@ -272,3 +272,14 @@ test('the extension reports native paths for local folders and remote paths for 
   assert.equal(folderPath({ uri: { scheme: 'file', fsPath: '/Users/roy/app', path: '/Users/roy/app' } }), '/Users/roy/app');
   assert.equal(folderPath({ uri: { scheme: 'vscode-remote', path: '/Volume1/GnarShare/gnarshare-working' } }), '/Volume1/GnarShare/gnarshare-working');
 });
+
+test("a window that isn't reporting is not mistaken for 'not in VS Code'", () => {
+  const now = 1_000_000;
+  // Only the remote window reports, unfocused; the local session's window is silent.
+  const reports = [{ window: 'r', focused: false, folders: ['gnarshare-working'], paths: ['/Volume1/GnarShare/gnarshare-working'], at: now }];
+  const local = focusFromEditorReports(reports, 'Flight-Clock-App', { now, cwd: '/Users/roy/Dropbox/Apps/Flights Dev/Flight-Clock-App' });
+  assert.equal(local.window, null);
+  assert.equal(local.unfocusedButReported, false, 'its own window never reported: the caller must look further');
+  const remote = focusFromEditorReports(reports, 'gnarshare-working', { now, cwd: '/Volume1/GnarShare/gnarshare-working' });
+  assert.equal(remote.unfocusedButReported, true, 'its window reported unfocused: you are elsewhere');
+});

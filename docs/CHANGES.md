@@ -222,6 +222,20 @@ Electron app; **you** means confirmed by hand on a real Windows PC or Mac.
 - **Files:** `vscode/clippy-bridge-ui/focus-report.js`, `src/frontmost.js`,
   `src/main.js` · **Checked:** tests.
 
+### Mac: a local session popped up because its window wasn't reporting
+- **Symptom:** `/status` said "no VS Code window has focus" while the local
+  window was in front; `editorWindows` listed only the remote window.
+- **Cause:** the local extension wasn't running in that window (it was open
+  before the extension was installed/updated and hadn't been reloaded), so the
+  only reporting window was unfocused and Clippy concluded you were elsewhere.
+- **Fix:** when no reporting window has focus but VS Code is the front app,
+  Clippy knows you're in a window that isn't reporting. If the session's own
+  window *is* reporting (unfocused), that's another window — pop up; if not,
+  it falls back to the window-title check (or, without titles, stays quiet).
+  `/status` now also lists `editorWindows`: what each window last reported.
+  Reload a window (Developer: Reload Window) after installing the extension.
+- **Files:** `src/frontmost.js`, `src/main.js` · **Checked:** tests.
+
 ### Seeing why
 - `http://127.0.0.1:43117/status` lists the last ten "stay quiet?" decisions
   (`focusChecks`): the session, whether it was recognised as VS Code, the

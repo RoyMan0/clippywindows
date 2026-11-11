@@ -350,15 +350,27 @@ function within(cwd, folderPath) {
 function focusFromEditorReports(reports, folder, { now = Date.now(), freshMs = 60_000, cwd = '' } = {}) {
   const fresh = [...reports].filter((r) => r && now - r.at < freshMs);
   if (!fresh.length) return null;
-  const front = fresh.filter((r) => r.focused).sort((a, b) => b.at - a.at)[0];
-  if (!front) return { focused: false, why: 'no VS Code window has focus', window: null };
   const want = String(folder || '').toLowerCase();
+  const holds = (r) =>
+    (cwd && (r.paths || []).some((p) => within(cwd, p))) ||
+    (want && (r.folders || []).some((f) => String(f).toLowerCase() === want));
+  const front = fresh.filter((r) => r.focused).sort((a, b) => b.at - a.at)[0];
+  // No reporting window has focus. Either you're in another app, or in a VS
+  // Code window whose extension isn't reporting (not installed there, not
+  // reloaded yet) — the caller tells those apart by the front app. Whether
+  // this session's own window is among the reporters decides what that means.
+  if (!front) {
+    return {
+      focused: false,
+      why: 'no reporting VS Code window has focus',
+      window: null,
+      unfocusedButReported: fresh.some(holds),
+    };
+  }
   // By full path where the window said where its folders are: the session runs
   // in one of them, or below it (Claude started in a subfolder of what's open).
   // By name otherwise — what an older extension reports.
-  const has =
-    (cwd && (front.paths || []).some((p) => within(cwd, p))) ||
-    (want && (front.folders || []).some((f) => String(f).toLowerCase() === want));
+  const has = holds(front);
   return {
     focused: Boolean(has),
     why: has ? 'the focused VS Code window has this folder open' : 'the focused VS Code window is another folder',

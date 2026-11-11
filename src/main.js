@@ -72,7 +72,7 @@ const { sendFeedback } = require('./feedback');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
 const { createOutbox } = require('./outbox');
-const { createFocusProbe, looksFocused, editorFocused, focusFromEditorReports } = require('./frontmost');
+const { createFocusProbe, looksFocused, editorFocused, focusFromEditorReports, isEditorApp } = require('./frontmost');
 const { winWindows, titleNames } = require('./win-windows');
 const { describeSource } = require('./source-app');
 const { routingPrompt, parseChoice, routable } = require('./delegate');
@@ -4276,7 +4276,19 @@ async function lookingAtIt(key, { cwd = '' } = {}) {
     const sessionCwd = cwd || tracker.cwdFor(key) || '';
     const folder = path.basename(sessionCwd);
     // The VS Code windows' own word, when the bridge extension is installed.
-    const reported = focusFromEditorReports(editorWindows.values(), folder, { cwd: sessionCwd });
+    let reported = focusFromEditorReports(editorWindows.values(), folder, { cwd: sessionCwd });
+    // No reporting window focused, but VS Code is the front app: you're in a
+    // window that isn't reporting. If this session's window reported (and isn't
+    // focused), that's another window — pop up. If it didn't, the reports can't
+    // say; fall through to the window-title check below.
+    if (reported && !reported.window) {
+      const { front } = await focusProbe.current().catch(() => ({ front: null }));
+      if (isEditorApp(front)) {
+        reported = reported.unfocusedButReported
+          ? { focused: false, why: "you're in a VS Code window that isn't this session's", window: null }
+          : null;
+      }
+    }
     if (reported) {
       rememberFocusCheck(key, term, {
         focused: reported.focused,
