@@ -68,6 +68,10 @@ Clippy (your computer) ◀── 127.0.0.1:43117 ◀── Clippy Bridge (local)
    adds Clippy's hooks to that machine's `~/.claude/settings.json`.
 3. **Reload the VS Code window.**
 
+The local extension also tells Clippy which VS Code window has focus and
+which folder it has open, which is how Clippy (on the Mac especially) knows to
+stay quiet only over the session's own window.
+
 Check it: Command Palette → **Clippy Bridge: Status**. It should say
 *listening* and *installed, Clippy is running*; the **Clippy Bridge** output
 channel logs anything that goes wrong.

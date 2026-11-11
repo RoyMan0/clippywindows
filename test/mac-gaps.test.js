@@ -184,3 +184,54 @@ test('when titles cannot be read, Clippy is told which permission is missing', a
   await editorFocused(null, 'p', { exec: said('com.apple.Safari', 'Safari', ''), titleNames, onTitle });
   assert.deepEqual(states, ['accessibility', 'automation', 'ok'], 'another app in front says nothing either way');
 });
+
+/* ---------------- VS Code's own word on which window has focus ---------------- */
+
+const { focusFromEditorReports } = require('../src/frontmost');
+const { startFocusReports, folderName } = require('../vscode/clippy-bridge-ui/focus-report');
+
+test('in the local project window, a remote session prompts (another folder)', () => {
+  const now = 1_000_000;
+  const reports = [
+    { window: 'a', focused: false, folders: ['gnarshare-working'], remote: 'tunnel', at: now - 1000 },
+    { window: 'b', focused: true, folders: ['flight-clock-app'], remote: '', at: now - 500 },
+  ];
+  assert.equal(focusFromEditorReports(reports, 'gnarshare-working', { now }).focused, false);
+  assert.equal(focusFromEditorReports(reports, 'flight-clock-app', { now }).focused, true);
+  assert.equal(focusFromEditorReports(reports, 'Flight-Clock-App', { now }).focused, true, 'case does not matter');
+});
+
+test('no VS Code window focused means you are elsewhere', () => {
+  const now = 1_000_000;
+  const reports = [{ window: 'a', focused: false, folders: ['x'], at: now }];
+  assert.deepEqual(focusFromEditorReports(reports, 'x', { now }).focused, false);
+});
+
+test('no recent reports: fall back to window titles', () => {
+  const now = 1_000_000;
+  assert.equal(focusFromEditorReports([], 'x', { now }), null);
+  assert.equal(focusFromEditorReports([{ window: 'a', focused: true, folders: ['x'], at: now - 120_000 }], 'x', { now }), null);
+});
+
+test('the extension reports focus changes, folders and a goodbye', async () => {
+  const posts = [];
+  let onState = null;
+  const vscode = {
+    window: { state: { focused: true }, onDidChangeWindowState: (fn) => ((onState = fn), { dispose() {} }) },
+    workspace: {
+      workspaceFolders: [{ uri: { path: '/Volume1/GnarShare/gnarshare-working' } }],
+      onDidChangeWorkspaceFolders: () => ({ dispose() {} }),
+    },
+    env: { remoteName: 'tunnel' },
+  };
+  const reporter = startFocusReports({ vscode, post: async (b) => posts.push(b), heartbeatMs: 60_000 });
+  vscode.window.state.focused = false;
+  onState();
+  reporter.dispose();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(posts.map((p) => [p.focused, p.gone || false]), [[true, false], [false, false], [false, true]]);
+  assert.deepEqual(posts[0].folders, ['gnarshare-working']);
+  assert.equal(posts[0].remote, 'tunnel');
+  assert.equal(new Set(posts.map((p) => p.window)).size, 1, 'one id per window');
+  assert.equal(folderName({ uri: { path: '/a/b/' } }), 'b');
+});

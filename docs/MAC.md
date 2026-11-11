@@ -52,16 +52,17 @@ it.
    Code windows so they pick the new hooks up.
 6. For VS Code tunnels: install both `.vsix` files in VS Code (Extensions →
    ⋯ → Install from VSIX…) while connected to the remote machine.
-7. **Permissions, after every new test build.** Clippy reads the front
-   window's title to tell your VS Code windows apart (so it stays quiet over
-   *this* project's window but still alerts you while you're in another one).
-   That needs **Accessibility** (System Settings → Privacy & Security →
-   Accessibility → *Clippy for Claude Code*), and macOS asking once to let it
-   control **System Events** — allow it. These test builds aren't signed, so
-   macOS treats each new one as a different app: after installing a new build,
-   switch Clippy **off and on again** in the Accessibility list, even if it
-   already looks on. If Clippy can't read titles, its 📎 menu shows
-   **⚠ Let Clippy read window titles…**, which opens the right pane.
+7. **Telling VS Code windows apart.** Clippy stays quiet over the window a
+   session is asking from, but alerts you while you're in another one. With the
+   **Clippy Bridge (local)** extension installed (0.4.0 or later), each VS Code
+   window tells Clippy itself whether it has focus and which folder it has
+   open — no macOS permission needed. Without the extension Clippy falls back
+   to reading window titles, which needs **Accessibility** (System Settings →
+   Privacy & Security → Accessibility → *Clippy for Claude Code*). These test
+   builds aren't signed, so macOS treats each new one as a different app: for
+   that fallback, remove Clippy from the Accessibility list (−) and add the new
+   one (+) after installing a build. http://127.0.0.1:43117/status lists the
+   last few decisions and why (`focusChecks`).
 
 ## Test checklist
 

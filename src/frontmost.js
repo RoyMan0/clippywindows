@@ -320,7 +320,33 @@ async function editorFocused(front, folder, { exec = run, titleNames, onTitle = 
   return decide(match, match ? 'the front window names this folder' : 'the front window is another folder', seen);
 }
 
+/**
+ * Decide from what the VS Code windows themselves reported (the Clippy Bridge
+ * local extension, see vscode/clippy-bridge-ui/focus-report.js): is the window
+ * you are in one that has this session's folder open?
+ *
+ * Returns null when no window has reported recently — the extension isn't
+ * installed or VS Code isn't running — so the caller falls back to window
+ * titles. Otherwise {focused, why, window}.
+ *
+ * @param {Iterable<{window, focused, folders, remote, at}>} reports
+ */
+function focusFromEditorReports(reports, folder, { now = Date.now(), freshMs = 60_000 } = {}) {
+  const fresh = [...reports].filter((r) => r && now - r.at < freshMs);
+  if (!fresh.length) return null;
+  const front = fresh.filter((r) => r.focused).sort((a, b) => b.at - a.at)[0];
+  if (!front) return { focused: false, why: 'no VS Code window has focus', window: null };
+  const want = String(folder || '').toLowerCase();
+  const has = want && (front.folders || []).some((f) => String(f).toLowerCase() === want);
+  return {
+    focused: Boolean(has),
+    why: has ? 'the focused VS Code window has this folder open' : 'the focused VS Code window is another folder',
+    window: front,
+  };
+}
+
 module.exports = {
+  focusFromEditorReports,
   isEditorApp,
   editorFocused,
   parseFrontEditor,

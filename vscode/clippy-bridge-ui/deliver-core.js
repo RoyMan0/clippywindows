@@ -77,7 +77,30 @@ function createDeliverer({ port = 43117, request = http.request, timeoutMs = TIM
     });
   }
 
-  return { deliver, cancel, ping };
+  /** Fire-and-forget POST of a small JSON report as a Clippy event. */
+  function report(event, body) {
+    return new Promise((resolve) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port,
+          method: 'POST',
+          path: `/hook/${event}?source=claude`,
+          headers: { 'Content-Type': 'application/json', 'x-clippy-hook': '#clippy' },
+          timeout: 2000,
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        }
+      );
+      req.on('timeout', () => req.destroy());
+      req.on('error', () => resolve(0));
+      req.end(JSON.stringify(body));
+    });
+  }
+
+  return { deliver, cancel, ping, report };
 }
 
 module.exports = { createDeliverer };

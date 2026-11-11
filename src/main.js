@@ -72,7 +72,7 @@ const { sendFeedback } = require('./feedback');
 const { DEV_SESSION, eventsFor, storyList, sandboxUsage } = require('./sandbox-scenarios');
 const { startCompletionPoll, coalesceAsync } = require('./async-control');
 const { createOutbox } = require('./outbox');
-const { createFocusProbe, looksFocused, editorFocused } = require('./frontmost');
+const { createFocusProbe, looksFocused, editorFocused, focusFromEditorReports } = require('./frontmost');
 const { winWindows, titleNames } = require('./win-windows');
 const { describeSource } = require('./source-app');
 const { routingPrompt, parseChoice, routable } = require('./delegate');
@@ -3620,7 +3620,7 @@ async function handlePermissionRequest(payload, ctx) {
   // the user is typing in — which is both faster to answer and impossible to
   // miss. Holding it here instead would cover that window with a card asking
   // the same thing.
-  if (await lookingAtIt(payload?.session_id || 'unknown')) {
+  if (await lookingAtIt(payload?.session_id || 'unknown', { cwd: payload?.cwd })) {
     tracker.handle('PermissionRequest', null, payload);
     updateTray();
     return {};
@@ -4255,21 +4255,36 @@ const focusProbe = createFocusProbe();
  * Answers false whenever it cannot tell. Being wrong that way shows a buddy
  * that was not strictly needed; being wrong the other way loses the message.
  */
-async function lookingAtIt(key) {
+async function lookingAtIt(key, { cwd = '' } = {}) {
   if (!settings.quietWhenFocused) return false;
   // A session in a tmux pane has no window of its own to be looking at.
   if (tmuxRecordFor(key)) return false;
   const term = tracker.terminalFor(key);
   if (!term) return false;
-  if (process.platform === 'win32') return lookingAtItOnWindows(key, term);
+  if (process.platform === 'win32') return lookingAtItOnWindows(key, term, cwd);
   // A VS Code session (the extension, its terminal, or a remote one through
   // the bridge): judged like Windows does, by the front app being the editor
   // and its front window's title naming the folder. The process-tree route
   // below can't see a remote session at all, and was the fragile part here.
   if (term.program === 'vscode' || term.entrypoint === 'claude-vscode') {
+    // The hook's own cwd first: a session's first event can be the very one
+    // being asked about, before the tracker has heard where it runs.
+    const folder = path.basename(cwd || tracker.cwdFor(key) || '');
+    // The VS Code windows' own word, when the bridge extension is installed.
+    const reported = focusFromEditorReports(editorWindows.values(), folder);
+    if (reported) {
+      rememberFocusCheck(key, term, {
+        focused: reported.focused,
+        why: `${reported.why} (reported by VS Code)`,
+        folder,
+        front: reported.window,
+      });
+      if (windowTitleTrouble) noteWindowTitleAccess('ok'); // titles aren't needed
+      return reported.focused;
+    }
     try {
       const { front } = await focusProbe.current();
-      return await editorFocused(front, path.basename(tracker.cwdFor(key) || ''), {
+      return await editorFocused(front, folder, {
         titleNames,
         onTitle: noteWindowTitleAccess,
         explain: (why) => rememberFocusCheck(key, term, why),
@@ -4311,11 +4326,11 @@ async function lookingAtIt(key) {
  * window handle, so a second VS Code window on another project doesn't count.
  * The resolved window is kept on the terminal record, like `appFor` does.
  */
-async function lookingAtItOnWindows(key, term) {
+async function lookingAtItOnWindows(key, term, cwd = '') {
   try {
     const front = await winWindows().front();
     if (!front || !front.hwnd) return false;
-    const hint = path.basename(tracker.cwdFor(key) || '');
+    const hint = path.basename(cwd || tracker.cwdFor(key) || '');
     if (!term.winTarget || term.winTargetHint !== hint) {
       term.winTarget = await resolveTarget(term, hint);
       term.winTargetHint = hint;
@@ -4333,6 +4348,29 @@ async function lookingAtItOnWindows(key, term) {
  * permission, and the tray offers the way to grant it; 'ok' clears it.
  */
 let windowTitleTrouble = null;
+
+/**
+ * What each VS Code window last said about itself (Clippy Bridge, local half):
+ * focused or not, and the folders it has open. The best answer to "is the user
+ * in this session's window?" — no window titles, no Accessibility needed.
+ */
+const editorWindows = new Map(); // window id -> { window, focused, folders, remote, at }
+function rememberEditorFocus(payload) {
+  const id = typeof payload?.window === 'string' ? payload.window.slice(0, 40) : '';
+  if (!id) return;
+  if (payload.gone) {
+    editorWindows.delete(id);
+    return;
+  }
+  editorWindows.set(id, {
+    window: id,
+    focused: Boolean(payload.focused),
+    folders: Array.isArray(payload.folders) ? payload.folders.slice(0, 20).map((f) => String(f).slice(0, 200)) : [],
+    remote: String(payload.remote || '').slice(0, 100),
+    at: Date.now(),
+  });
+  if (editorWindows.size > 50) editorWindows.delete(editorWindows.keys().next().value);
+}
 
 /**
  * The last few "is the user already looking at it?" decisions, with what was
@@ -4374,6 +4412,11 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   }
   // The background wait for a reply to the turn that just ended.
   if (eventName === 'StopWait') return handleStopWait(payload, ctx);
+  // A VS Code window saying whether it has focus, and what it has open.
+  if (eventName === 'ClippyFocus') {
+    rememberEditorFocus(payload);
+    return undefined;
+  }
   // You typed in the session yourself, or it ended: nothing to wait for.
   if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') {
     rewakeWaits.get(payload?.session_id)?.resolve({});
