@@ -4272,6 +4272,7 @@ async function lookingAtIt(key) {
       return await editorFocused(front, path.basename(tracker.cwdFor(key) || ''), {
         titleNames,
         onTitle: noteWindowTitleAccess,
+        explain: (why) => rememberFocusCheck(key, term, why),
       });
     } catch {
       return false;
@@ -4286,13 +4287,20 @@ async function lookingAtIt(key) {
       focusProbe.current(),
       appFor(term),
     ]);
-    return looksFocused({
+    const focused = looksFocused({
       front,
       app,
       program: term.program || '',
       tty: term.tty || '',
       focusedTty,
     });
+    rememberFocusCheck(key, term, {
+      focused,
+      why: focused ? "the session's app is in front (by process)" : "the session's app is not in front (by process)",
+      front: front || null,
+      app: app ? { pid: app.pid, name: app.name } : null,
+    });
+    return focused;
   } catch {
     return false;
   }
@@ -4325,6 +4333,23 @@ async function lookingAtItOnWindows(key, term) {
  * permission, and the tray offers the way to grant it; 'ok' clears it.
  */
 let windowTitleTrouble = null;
+
+/**
+ * The last few "is the user already looking at it?" decisions, with what was
+ * seen and why — shown on http://127.0.0.1:<port>/status, so a buddy that
+ * stays quiet (or doesn't) can be explained without a debugger.
+ */
+const focusChecks = [];
+function rememberFocusCheck(key, term, why) {
+  focusChecks.unshift({
+    at: new Date().toISOString(),
+    session: key,
+    program: term?.program || '',
+    entrypoint: term?.entrypoint || '',
+    ...why,
+  });
+  focusChecks.length = Math.min(focusChecks.length, 10);
+}
 function noteWindowTitleAccess(state) {
   const next = state === 'ok' ? null : state;
   if (next === windowTitleTrouble) return;
@@ -5322,6 +5347,8 @@ app.whenReady().then(async () => {
         pinned: b.pinned,
       })),
       ...(hookDrift ? { hookDrift } : {}),
+      focusChecks,
+      ...(windowTitleTrouble ? { windowTitleTrouble } : {}),
     }),
   });
   try {

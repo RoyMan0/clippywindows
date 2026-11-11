@@ -91,7 +91,8 @@ go to the same Clippy anyway). The bridge works the same from a Mac (see [MAC.md
   - *Approval card:* words typed with **Deny** are Claude's reason, as
     before; words typed with **Allow** come back to Claude with the tool's
     result (Claude Code's approve can't carry a message itself).
-  - *Question card:* each question has an **Other…** box for your own answer.
+  - *Question card:* a box under each question adds a note to the option
+    you pick, or is your own answer when you pick none.
   - *Finished card:* a reply wakes Claude with it. A background Stop hook
     (Claude Code's `asyncRewake`) waits up to 30 minutes after each turn; it
     ends quietly if you click *looks good* or type in VS Code instead. After

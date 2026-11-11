@@ -290,7 +290,11 @@ function parseFrontEditor(stdout = '') {
  * @param {string} folder      the session's folder name
  * @param {object} opts        `exec` for tests; `titleNames` from win-windows
  */
-async function editorFocused(front, folder, { exec = run, titleNames, onTitle = () => {} } = {}) {
+async function editorFocused(front, folder, { exec = run, titleNames, onTitle = () => {}, explain = () => {} } = {}) {
+  const decide = (focused, why, seen = null) => {
+    explain({ focused, why, folder, front: seen || front || null });
+    return focused;
+  };
   let seen = null;
   try {
     seen = parseFrontEditor(await exec(OSASCRIPT, ['-e', FRONT_EDITOR_SCRIPT]));
@@ -300,19 +304,20 @@ async function editorFocused(front, folder, { exec = run, titleNames, onTitle = 
   if (!seen || (!seen.bundleId && !seen.name)) {
     // System Events said no (Automation not allowed): app-level only.
     if (isEditorApp(front)) onTitle('automation');
-    return isEditorApp(front);
+    return decide(isEditorApp(front), 'System Events unavailable — judged by the front app only');
   }
-  if (!isEditorApp(seen)) return false;
-  if (!folder || !titleNames) return true;
+  if (!isEditorApp(seen)) return decide(false, 'another app is in front', seen);
+  if (!folder || !titleNames) return decide(true, 'editor in front; no folder to compare', seen);
   if (!seen.title) {
     // An editor with no readable title: Accessibility isn't granted (or is
     // stale). Quiet, so it never pops up over the project being worked on —
     // but it can't tell this project's window from another one's.
     onTitle('accessibility');
-    return true;
+    return decide(true, 'editor in front but its window title could not be read', seen);
   }
   onTitle('ok');
-  return titleNames(seen.title, folder);
+  const match = titleNames(seen.title, folder);
+  return decide(match, match ? 'the front window names this folder' : 'the front window is another folder', seen);
 }
 
 module.exports = {

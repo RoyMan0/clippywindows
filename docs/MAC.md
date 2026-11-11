@@ -72,7 +72,8 @@ it.
    **Allow with a note** — does Claude mention the note after the tool runs?
    **Reply on the finished card** — does Claude wake up and act on it? Clippy
    must never type into VS Code.
-3. A **question** with your own text in **Other…**.
+3. A **question**: pick an option and add a note in the box under it; and
+   another one answered with your own text alone.
 4. **Go to VS Code ↗** with two VS Code windows open — the right one comes
    forward (needs Accessibility, as before).
 5. Drag the buddy to the other monitor, answer the card, trigger another —
