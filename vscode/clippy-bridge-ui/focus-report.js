@@ -23,6 +23,17 @@ const HEARTBEAT_MS = 20_000;
 /** A folder's name, from a workspace folder URI (local or remote). */
 const folderName = (folder) => path.posix.basename(String(folder?.uri?.path || '').replace(/\/+$/, ''));
 
+/**
+ * A folder's full path as the agent there would write its cwd: the native path
+ * for a local folder (`/Users/me/app`, `C:\\Users\\me\\app`), the path on
+ * that machine for a remote one (`/Volume1/share/app`).
+ */
+const folderPath = (folder) => {
+  const uri = folder?.uri;
+  if (!uri) return '';
+  return String(uri.scheme === 'file' && uri.fsPath ? uri.fsPath : uri.path || '');
+};
+
 function startFocusReports({ vscode, post, heartbeatMs = HEARTBEAT_MS }) {
   const window = crypto.randomBytes(6).toString('hex');
   const report = (extra = {}) => {
@@ -30,6 +41,7 @@ function startFocusReports({ vscode, post, heartbeatMs = HEARTBEAT_MS }) {
       window,
       focused: Boolean(vscode.window.state?.focused),
       folders: (vscode.workspace.workspaceFolders || []).map(folderName).filter(Boolean),
+      paths: (vscode.workspace.workspaceFolders || []).map(folderPath).filter(Boolean),
       remote: vscode.env?.remoteName || '',
       ...extra,
     };
@@ -53,4 +65,4 @@ function startFocusReports({ vscode, post, heartbeatMs = HEARTBEAT_MS }) {
   };
 }
 
-module.exports = { startFocusReports, folderName };
+module.exports = { startFocusReports, folderName, folderPath };

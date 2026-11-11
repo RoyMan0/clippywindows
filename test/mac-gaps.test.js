@@ -235,3 +235,40 @@ test('the extension reports focus changes, folders and a goodbye', async () => {
   assert.equal(new Set(posts.map((p) => p.window)).size, 1, 'one id per window');
   assert.equal(folderName({ uri: { path: '/a/b/' } }), 'b');
 });
+
+/* ---------------- matching by full path ---------------- */
+
+const { within } = require('../src/frontmost');
+const { folderPath } = require('../vscode/clippy-bridge-ui/focus-report');
+
+test('a session in a subfolder of the focused window counts as that window', () => {
+  const now = 1_000_000;
+  const reports = [
+    { window: 'l', focused: true, folders: ['Projects'], paths: ['/Users/roy/Projects'], at: now },
+    { window: 'r', focused: false, folders: ['gnarshare-working'], paths: ['/Volume1/GnarShare/gnarshare-working'], at: now },
+  ];
+  const local = focusFromEditorReports(reports, 'flight-clock-app', { now, cwd: '/Users/roy/Projects/flight-clock-app' });
+  assert.equal(local.focused, true, 'Claude started below the folder VS Code has open');
+  const deeper = focusFromEditorReports(reports, 'ios', { now, cwd: '/Users/roy/Projects/flight-clock-app/ios' });
+  assert.equal(deeper.focused, true);
+  const remote = focusFromEditorReports(reports, 'gnarshare-working', { now, cwd: '/Volume1/GnarShare/gnarshare-working' });
+  assert.equal(remote.focused, false, 'the NAS session is in the other window');
+});
+
+test('a folder whose name only starts the same is a different folder', () => {
+  assert.equal(within('/Users/roy/app-old', '/Users/roy/app'), false);
+  assert.equal(within('/Users/roy/app', '/Users/roy/app/'), true);
+  assert.equal(within('C:\\Users\\roy\\app\\src', '/c:/Users/Roy/app'), true, 'Windows paths compare too');
+  assert.equal(within('', '/x'), false);
+});
+
+test('reports from an older extension still match by name', () => {
+  const now = 1_000_000;
+  const reports = [{ window: 'l', focused: true, folders: ['flight-clock-app'], at: now }];
+  assert.equal(focusFromEditorReports(reports, 'flight-clock-app', { now, cwd: '/Users/roy/flight-clock-app' }).focused, true);
+});
+
+test('the extension reports native paths for local folders and remote paths for remote ones', () => {
+  assert.equal(folderPath({ uri: { scheme: 'file', fsPath: '/Users/roy/app', path: '/Users/roy/app' } }), '/Users/roy/app');
+  assert.equal(folderPath({ uri: { scheme: 'vscode-remote', path: '/Volume1/GnarShare/gnarshare-working' } }), '/Volume1/GnarShare/gnarshare-working');
+});

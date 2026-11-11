@@ -331,13 +331,34 @@ async function editorFocused(front, folder, { exec = run, titleNames, onTitle = 
  *
  * @param {Iterable<{window, focused, folders, remote, at}>} reports
  */
-function focusFromEditorReports(reports, folder, { now = Date.now(), freshMs = 60_000 } = {}) {
+/** A path made comparable: forward slashes, no `/c:` lead, no trailing slash, lower case. */
+function comparablePath(p) {
+  return String(p || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/([a-zA-Z]:)/, '$1')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+/** Is `cwd` this folder, or somewhere inside it? */
+function within(cwd, folderPath) {
+  const c = comparablePath(cwd);
+  const f = comparablePath(folderPath);
+  return Boolean(c && f) && (c === f || c.startsWith(`${f}/`));
+}
+
+function focusFromEditorReports(reports, folder, { now = Date.now(), freshMs = 60_000, cwd = '' } = {}) {
   const fresh = [...reports].filter((r) => r && now - r.at < freshMs);
   if (!fresh.length) return null;
   const front = fresh.filter((r) => r.focused).sort((a, b) => b.at - a.at)[0];
   if (!front) return { focused: false, why: 'no VS Code window has focus', window: null };
   const want = String(folder || '').toLowerCase();
-  const has = want && (front.folders || []).some((f) => String(f).toLowerCase() === want);
+  // By full path where the window said where its folders are: the session runs
+  // in one of them, or below it (Claude started in a subfolder of what's open).
+  // By name otherwise — what an older extension reports.
+  const has =
+    (cwd && (front.paths || []).some((p) => within(cwd, p))) ||
+    (want && (front.folders || []).some((f) => String(f).toLowerCase() === want));
   return {
     focused: Boolean(has),
     why: has ? 'the focused VS Code window has this folder open' : 'the focused VS Code window is another folder',
@@ -347,6 +368,7 @@ function focusFromEditorReports(reports, folder, { now = Date.now(), freshMs = 6
 
 module.exports = {
   focusFromEditorReports,
+  within,
   isEditorApp,
   editorFocused,
   parseFrontEditor,

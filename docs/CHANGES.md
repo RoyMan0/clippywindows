@@ -210,6 +210,18 @@ Electron app; **you** means confirmed by hand on a real Windows PC or Mac.
 - **Checked:** tests; app (in `flight-clock-app` → NAS prompt pops up; in
   `gnarshare-working` → quiet); you.
 
+### Mac: a local VS Code session still popped up over its own window
+- **Cause:** windows were matched to sessions by folder *name* only — the last
+  part of Claude's working directory against the last part of the folder each
+  window has open. A session started in a subfolder of what VS Code has open
+  (or a window opened on a parent folder) never matched.
+- **Fix:** the local extension (0.5.0) also reports each folder's full path,
+  and Clippy stays quiet when the session runs in or below a folder the
+  focused window has open (Windows-style paths compare too). Older extensions
+  still match by name.
+- **Files:** `vscode/clippy-bridge-ui/focus-report.js`, `src/frontmost.js`,
+  `src/main.js` · **Checked:** tests.
+
 ### Seeing why
 - `http://127.0.0.1:43117/status` lists the last ten "stay quiet?" decisions
   (`focusChecks`): the session, whether it was recognised as VS Code, the

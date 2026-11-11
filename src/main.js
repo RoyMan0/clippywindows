@@ -4273,14 +4273,16 @@ async function lookingAtIt(key, { cwd = '' } = {}) {
   if (term.program === 'vscode' || term.entrypoint === 'claude-vscode') {
     // The hook's own cwd first: a session's first event can be the very one
     // being asked about, before the tracker has heard where it runs.
-    const folder = path.basename(cwd || tracker.cwdFor(key) || '');
+    const sessionCwd = cwd || tracker.cwdFor(key) || '';
+    const folder = path.basename(sessionCwd);
     // The VS Code windows' own word, when the bridge extension is installed.
-    const reported = focusFromEditorReports(editorWindows.values(), folder);
+    const reported = focusFromEditorReports(editorWindows.values(), folder, { cwd: sessionCwd });
     if (reported) {
       rememberFocusCheck(key, term, {
         focused: reported.focused,
         why: `${reported.why} (reported by VS Code)`,
         folder,
+        cwd: sessionCwd,
         front: reported.window,
       });
       if (windowTitleTrouble) noteWindowTitleAccess('ok'); // titles aren't needed
@@ -4370,6 +4372,7 @@ function rememberEditorFocus(payload) {
     window: id,
     focused: Boolean(payload.focused),
     folders: Array.isArray(payload.folders) ? payload.folders.slice(0, 20).map((f) => String(f).slice(0, 200)) : [],
+    paths: Array.isArray(payload.paths) ? payload.paths.slice(0, 20).map((f) => String(f).slice(0, 1000)) : [],
     remote: String(payload.remote || '').slice(0, 100),
     at: Date.now(),
   });
