@@ -1308,6 +1308,9 @@ function renderOfficialBars(account, prefix, now) {
         hint: codex
           ? `${limit.percent}% of this limit used — Codex's own number, from the rate limits it ` +
             `wrote down with its last turn (${fetched}).`
+          : official.live
+          ? `${limit.percent}% of this limit used — Claude Code's own number, live from its ` +
+            `last reply (${fetched}).`
           : `${limit.percent}% of this limit used — Claude Code's own number, cached when ` +
             `/usage last loaded (${fetched}).`,
       })
@@ -1318,6 +1321,7 @@ function renderOfficialBars(account, prefix, now) {
     const plan = official.plan ? ` (${official.plan} plan)` : '';
     return `${who}from Codex's last turn, ${fetched}${plan}.`;
   }
+  if (official.live) return `${who}live from Claude Code, ${fetched}.`;
   return (
     `${who}from /usage, cached ${fetched}` +
     `${age > 6 * 60 * 60 * 1000 ? ' — getting stale: open /usage in any session to refresh' : ''}.`

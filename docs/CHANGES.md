@@ -108,6 +108,23 @@ Electron app; **you** means confirmed by hand on a real Windows PC or Mac.
   `scripts/prepare-bridge.js`
 - **Checked:** tests; app.
 
+### The stats panel's plan allowance wasn't current
+- **Cause:** the 5-hour and weekly bars came only from Claude Code's cached
+  `/usage` answer (`cachedUsageUtilization` in `~/.claude.json`), which Claude
+  Code refreshes only when `/usage` is opened — hours or days old otherwise.
+- **Fix:** Claude Code hands its status line the live `rate_limits` (5-hour and
+  7-day used % and reset time) after every reply. Clippy now installs a status
+  line that prints nothing and passes those on (`ClippyStatus`); the panel lays
+  them over the cache whenever they're newer and says "live from Claude Code".
+  The per-model weekly row, which the status line doesn't carry, stays from the
+  cache. Only an empty status-line slot is used — your own is never touched.
+  Remote machines send it through the bridge; Windows' local http style has no
+  status line. Caveats: in a *terminal* session any status line hides some
+  footer hints; whether the VS Code extension runs status lines isn't
+  documented (reports say it runs them without showing them).
+- **Files:** `bin/clippy-hooks.js`, `src/usage.js`, `src/main.js`,
+  `src/renderer/clippy.js` · **Checked:** tests; app.
+
 ---
 
 ## 3. Text typed on cards reaching Claude

@@ -608,3 +608,36 @@ test('two buddies polling one transcript at once do not count it twice', async (
   assert.deepEqual(c, a);
   assert.deepEqual(await sessionUsage(file), a);
 });
+
+test("live plan usage from the status line is laid over Claude Code's /usage cache", () => {
+  const { liveLimitsFrom, withLiveLimits } = require('../src/usage');
+  const live = liveLimitsFrom({
+    five_hour: { used_percentage: 23.5, resets_at: 1_800_000_000 },
+    seven_day: { used_percentage: 41.2, resets_at: 1_800_500_000 },
+  });
+  assert.deepEqual(live.map((l) => [l.kind, l.percent, l.resetsAt]), [
+    ['session', 23.5, 1_800_000_000_000],
+    ['weekly_all', 41.2, 1_800_500_000_000],
+  ]);
+  assert.equal(liveLimitsFrom(undefined), null, 'API-key accounts have none');
+
+  const cache = {
+    fetchedAtMs: 1000,
+    limits: [
+      { kind: 'session', percent: 2, label: 'session · 5 hours' },
+      { kind: 'weekly_all', percent: 9, label: 'week · all models' },
+      { kind: 'weekly_scoped', percent: 8, label: 'week · Fable' },
+    ],
+  };
+  const merged = withLiveLimits(cache, { limits: live, at: 5000 });
+  assert.equal(merged.live, true);
+  assert.equal(merged.fetchedAtMs, 5000);
+  assert.deepEqual(merged.limits.map((l) => [l.kind, l.percent]), [
+    ['session', 23.5],
+    ['weekly_all', 41.2],
+    ['weekly_scoped', 8],
+  ], 'the per-model row the status line lacks is kept from the cache');
+  assert.equal(withLiveLimits(cache, { limits: live, at: 500 }), cache, 'a newer /usage wins');
+  assert.equal(withLiveLimits(null, { limits: live, at: 5 }).limits.length, 2, 'live alone works too');
+  assert.equal(withLiveLimits(cache, null), cache);
+});

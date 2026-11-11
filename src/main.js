@@ -62,6 +62,8 @@ const {
   lastAssistantText,
   usageWindows,
   readOfficialUsage,
+  liveLimitsFrom,
+  withLiveLimits,
   readCodexUsage,
   modelFromTranscriptFile,
 } = require('./usage');
@@ -2795,6 +2797,19 @@ function rememberRemoteUsage(payload, ctx) {
   });
 }
 
+/**
+ * Live plan usage from Clippy's status line, per machine ('' = this one): the
+ * 5-hour and weekly percentages Claude Code holds right now, newer than the
+ * /usage cache whenever Claude has replied since /usage was last opened.
+ */
+const liveUsage = new Map(); // host -> { limits, at }
+function rememberLiveUsage(payload, ctx) {
+  const limits = liveLimitsFrom(payload?.rate_limits);
+  if (!limits) return;
+  const host = String(ctx?.headers?.['x-clippy-remote'] || '').slice(0, 100);
+  liveUsage.set(host, { limits, at: Date.now() });
+}
+
 /** This session's numbers as the remote bridge last reported them, if fresh. */
 function remoteUsageFor(key) {
   const entry = remoteSessionUsage.get(key);
@@ -2812,7 +2827,8 @@ function withRemoteAccounts(accounts, ownHost) {
   if (!fresh.length) return accounts;
   // The session's own machine first, then the most recently heard from.
   fresh.sort(([ha, a], [hb, b]) => (ha === ownHost ? -1 : hb === ownHost ? 1 : b.at - a.at));
-  const [host, remote] = fresh[0];
+  const [host, cachedRemote] = fresh[0];
+  const remote = { ...cachedRemote, official: withLiveLimits(cachedRemote.official, liveUsage.get(host)) };
   const local = accounts.find((a) => a.agent === 'claude');
   const newer = (x, y) => ((x?.fetchedAtMs || 0) >= (y?.fetchedAtMs || 0) ? x : y);
   if (!local) {
@@ -2878,7 +2894,8 @@ async function collectAccounts(now) {
     USAGE_AGENTS.map(async ({ agent, title, dir, official }) => {
       if (!fs.existsSync(dir)) return null;
       const [limits, windows] = await Promise.all([official(), usageWindowsFor(agent, now)]);
-      return { agent, title, official: limits, windows };
+      // Claude Code's live numbers from this machine's status line, over the cache.
+      return { agent, title, official: agent === 'claude' ? withLiveLimits(limits, liveUsage.get('')) : limits, windows };
     })
   );
   return accounts.filter(Boolean);
@@ -4431,6 +4448,11 @@ function handleHookEvent(eventName, kind, payload, ctx) {
   }
   // The background wait for a reply to the turn that just ended.
   if (eventName === 'StopWait') return handleStopWait(payload, ctx);
+  // Clippy's status line: Claude Code's live plan usage.
+  if (eventName === 'ClippyStatus') {
+    rememberLiveUsage(payload, ctx);
+    return undefined;
+  }
   // A VS Code window saying whether it has focus, and what it has open.
   if (eventName === 'ClippyFocus') {
     rememberEditorFocus(payload);

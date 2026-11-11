@@ -115,22 +115,34 @@ test('the hooks never subscribe SessionStart', () => {
   }
 });
 
-test('install never touches the statusline: the prompt bar is not ours', () => {
-  // Clippy used to put a 📎 at the right edge of Claude Code's input box. The
-  // one line you are typing on is the worst place for a second thing to sit,
-  // so the app draws nothing there and the installer claims nothing.
-  const settings = installHooks({}, 43117);
-  assert.equal(settings.statusLine, undefined);
+test('the statusline: silent, only an empty slot, never the user\'s own', () => {
+  // Clippy's status line draws nothing; it passes Claude Code's live
+  // rate_limits to the app so the stats panel is current.
+  const settings = installHooks({}, 43117, { style: 'command' });
+  assert.equal(settings.statusLine.type, 'command');
+  assert.match(settings.statusLine.command, /hook\/ClippyStatus\?source=claude/);
+  assert.match(settings.statusLine.command, />\/dev\/null 2>&1; true #clippy$/, 'prints nothing');
 
-  // One we installed before is taken back out, so nobody is left running a
-  // curl on every keystroke to render an empty line.
-  const ours = installHooks({ statusLine: { ...OLD_STATUSLINE } }, 43117);
-  assert.equal(ours.statusLine, undefined);
+  // One we installed before (the old 📎 line) is replaced by the new one.
+  const ours = installHooks({ statusLine: { ...OLD_STATUSLINE } }, 43117, { style: 'command' });
+  assert.match(ours.statusLine.command, /ClippyStatus/);
 
   // …and one the user wrote themselves is left exactly where it is.
   const theirs = { type: 'command', command: '~/bin/my-statusline.sh' };
-  const user = installHooks({ statusLine: { ...theirs } }, 43117);
+  const user = installHooks({ statusLine: { ...theirs } }, 43117, { style: 'command' });
   assert.deepEqual(user.statusLine, theirs);
+  assert.equal(checkDrift(user, 43117, { style: 'command' }).missing.length, 0, 'theirs is never drift');
+
+  // Remote machines feed it through the relay; Windows' http style has none.
+  assert.match(installHooks({}, 43117, { style: 'relay' }).statusLine.command, /hook\.sh" 'ClippyStatus/);
+  assert.equal(installHooks({}, 43117, { style: 'http' }).statusLine, undefined);
+
+  // An install from before it asks to be updated.
+  const older = installHooks({}, 43117, { style: 'command' });
+  delete older.statusLine;
+  assert.deepEqual(checkDrift(older, 43117, { style: 'command' }).missing, ['statusLine (live usage)']);
+  uninstallHooks(older);
+  assert.equal(older.statusLine, undefined);
 });
 
 test('decide hooks echo the response as their decision and fail fast when app is down', () => {

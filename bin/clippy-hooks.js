@@ -337,15 +337,35 @@ function installHooks(settings, port = DEFAULT_PORT, { style = defaultHookStyle(
   // Claude Code renders exactly one statusline, so a user's own stays theirs:
   // we only claim the slot when it's empty (uninstallHooks above already
   // cleared a previous install of ours).
-  // Clippy no longer claims the statusline: the prompt bar belongs to the
-  // agent you are typing at, and the app draws nothing there any more (see
-  // statuslineFor). One we installed previously is taken back out, so nobody
-  // is left running a curl on every keystroke to render an empty line. One the
-  // user wrote themselves is never touched.
-  if (isOurs(settings.statusLine)) {
+  //
+  // What the slot is for now: Claude Code hands its status line the account's
+  // live 5-hour and weekly usage (`rate_limits`) after every reply — the only
+  // place it does, short of opening /usage. Clippy's status line prints
+  // nothing and passes that on, so the stats panel is current. It is the one
+  // thing Clippy puts there, and only into an empty slot: a status line the
+  // user wrote themselves is never touched. Not on Windows' http style, where
+  // a status line has no shell Clippy can rely on.
+  const command = statuslineCommand(style, port);
+  if (command && (!settings.statusLine || isOurs(settings.statusLine))) {
+    settings.statusLine = { type: 'command', command };
+  } else if (!command && isOurs(settings.statusLine)) {
     delete settings.statusLine;
   }
   return settings;
+}
+
+/** The silent status line that feeds Clippy live usage, or '' where there is none. */
+function statuslineCommand(style, port = DEFAULT_PORT) {
+  if (style === 'relay') {
+    return `sh "$HOME/${RELAY_HOOK}" 'ClippyStatus?source=claude' >/dev/null 2>&1; true ${MARKER}`;
+  }
+  if (style === 'command') {
+    return (
+      `curl -s -m 1 -X POST 'http://127.0.0.1:${port}/hook/ClippyStatus?source=claude' ` +
+      `-H 'Content-Type: application/json' -H 'X-Clippy-Reply: 1' --data-binary @- >/dev/null 2>&1; true ${MARKER}`
+    );
+  }
+  return '';
 }
 
 /** Add Codex hooks to ~/.codex/hooks.json. */
@@ -449,14 +469,15 @@ function checkDrift(settings, port = DEFAULT_PORT, { style = defaultHookStyle() 
   if (!drift.installed) return drift;
   // No statusline at all means an install older than this build; one the user
   // wrote themselves is respected, so it never counts as drift.
+  const want = statuslineCommand(style, port);
   if (!settings.statusLine) {
-    // Not missing any more — Clippy stopped putting anything there.
+    // An empty slot we would fill: the live-usage status line is missing.
+    if (want) drift.missing.push('statusLine (live usage)');
   } else if (isOurs(settings.statusLine)) {
     const command = String(settings.statusLine.command);
-    if (!command.includes(`127.0.0.1:${port}/`)) drift.wrongPort = true;
-    // Builds before this one put the buddy's whole name there; those commands
-    // never probed the terminal width, which is how we can tell them apart.
-    if (!command.includes('cols=')) drift.stale = true;
+    if (!command.includes('ClippyStatus')) drift.stale = true; // an older one of ours
+    else if (style !== 'relay' && !command.includes(`127.0.0.1:${port}/`)) drift.wrongPort = true;
+    if (!want) drift.stale = true;
   }
   return drift;
 }
@@ -780,6 +801,7 @@ module.exports = {
   hookCommand,
   httpHook,
   relayCommand,
+  statuslineCommand,
   powershellRewake,
   specsFor,
   REWAKE_SPEC,

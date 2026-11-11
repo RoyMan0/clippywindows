@@ -732,6 +732,49 @@ async function readOfficialUsage(file = path.join(require('node:os').homedir(), 
   return { fetchedAtMs: Number(cached.fetchedAtMs) || 0, limits: rows };
 }
 
+/* ---------------- The real allowance, live from Claude Code's status line ---------------- */
+
+/**
+ * Claude Code gives its status line the account's current 5-hour and 7-day
+ * usage (`rate_limits`) after every reply. Clippy's status line passes that on;
+ * this turns it into the same rows readOfficialUsage gives. Null when absent
+ * (an API-key account, or before the session's first reply).
+ */
+function liveLimitsFrom(rateLimits) {
+  const rows = [];
+  const add = (win, kind, group, label) => {
+    if (!win || typeof win.used_percentage !== 'number') return;
+    rows.push({
+      kind,
+      group,
+      percent: Math.max(0, Math.round(win.used_percentage * 10) / 10),
+      severity: 'normal',
+      resetsAt: Number(win.resets_at) > 0 ? Number(win.resets_at) * 1000 : 0,
+      label,
+    });
+  };
+  add(rateLimits?.five_hour, 'session', 'session', 'session · 5 hours');
+  add(rateLimits?.seven_day, 'weekly_all', 'weekly', 'week · all models');
+  return rows.length ? rows : null;
+}
+
+/**
+ * The cached /usage answer with the live numbers laid over it: the rows the
+ * status line knows (5-hour, week) replaced when the live reading is newer;
+ * the rest (the per-model weekly row) kept from the cache. `live` marks it.
+ */
+function withLiveLimits(official, live) {
+  if (!live || !Array.isArray(live.limits) || !live.limits.length) return official;
+  if (official && (official.fetchedAtMs || 0) >= live.at) return official;
+  const base = official?.limits || [];
+  const byKind = new Map(live.limits.map((l) => [l.kind, l]));
+  const merged = base.map((l) => byKind.get(l.kind) || l);
+  for (const l of live.limits) if (!base.some((b) => b.kind === l.kind)) merged.push(l);
+  const order = { session: 0, weekly_all: 1 };
+  merged.sort((a, b) => (order[a.kind] ?? 2) - (order[b.kind] ?? 2));
+  return { fetchedAtMs: live.at, limits: merged, live: true };
+}
+
 /* ---------------- The real allowance, as Codex writes it down ---------------- */
 
 // How many of the newest rollouts to look in for a rate-limit line. Codex
@@ -828,6 +871,8 @@ module.exports = {
   agesOutAt,
   usageWindows,
   readOfficialUsage,
+  liveLimitsFrom,
+  withLiveLimits,
   readCodexUsage,
   OPUS,
   SESSION_WINDOW_MS,
