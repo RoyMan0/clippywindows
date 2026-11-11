@@ -31,7 +31,7 @@ const { spawn } = require('node:child_process');
 
 const CALL_TIMEOUT_MS = 4000;
 // Compiling the C# below is the slow part of the first call.
-const FIRST_CALL_TIMEOUT_MS = 15000;
+const FIRST_CALL_TIMEOUT_MS = 30000; // a cold PowerShell on a slow machine (or CI runner) can take a while
 
 /** Process names (no .exe, lower case) that host each kind of session. */
 const EDITOR_PROCESSES = ['code', 'code - insiders', 'cursor', 'windsurf', 'vscodium'];
