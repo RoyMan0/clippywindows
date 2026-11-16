@@ -3657,7 +3657,10 @@ async function handlePermissionRequest(payload, ctx) {
     { event: 'PermissionRequest', sessionId: reaction.sessionId },
     APPROVAL_HOLD_MS
   );
-  ctx.onClose(() => broker.resolve(id, 'cancel'));
+  logApproval(id, 'asked', { session: reaction.sessionId, tool: payload.tool_name, remote: ctx?.headers?.['x-clippy-remote'] || '' });
+  ctx.onClose(() => {
+    if (broker.resolve(id, 'cancel')) logApproval(id, 'hook gave up before an answer');
+  });
 
   rememberAttention({
     id,
@@ -3688,6 +3691,7 @@ async function handlePermissionRequest(payload, ctx) {
   );
 
   const { action, message, timedOut } = await promise;
+  logApproval(id, timedOut ? 'timed out' : `answered: ${action}`, message ? { note: true } : {});
 
   if (action === 'pass' || timedOut) moveAttentionToTerminal(id);
   else forgetAttention(id);
@@ -4406,6 +4410,17 @@ function rememberEditorFocus(payload) {
     at: Date.now(),
   });
   if (editorWindows.size > 50) editorWindows.delete(editorWindows.keys().next().value);
+}
+
+/**
+ * What happened to the last few approval cards: asked, clicked, answered, or
+ * the hook giving up first — on /status, so "I clicked Allow and nothing
+ * happened" shows which step it stopped at.
+ */
+const approvalLog = [];
+function logApproval(id, what, extra = {}) {
+  approvalLog.unshift({ at: new Date().toISOString(), id, what, ...extra });
+  approvalLog.length = Math.min(approvalLog.length, 30);
 }
 
 /**
@@ -5313,7 +5328,9 @@ app.whenReady().then(async () => {
       resolveReview(id, a, m);
       return;
     }
-    if (!broker.resolve(id, a, m)) drive?.resolve(id, a, m);
+    const taken = broker.resolve(id, a, m);
+    if (String(id).startsWith('d')) logApproval(id, taken ? `clicked ${a}` : `clicked ${a}, but it was no longer waiting`);
+    if (!taken) drive?.resolve(id, a, m);
   });
   ipcMain.on('clippy-extend', (e, id) => {
     const expiresAt = broker.extend(id) || drive?.extend(id);
@@ -5432,6 +5449,7 @@ app.whenReady().then(async () => {
       })),
       ...(hookDrift ? { hookDrift } : {}),
       focusChecks,
+      approvals: approvalLog,
       // What each VS Code window last said about itself (the local bridge
       // extension): what "stay quiet" decisions are made from.
       editorWindows: [...editorWindows.values()].map((w) => ({
