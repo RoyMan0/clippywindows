@@ -72,6 +72,10 @@ The local extension also tells Clippy which VS Code window has focus and
 which folder it has open, which is how Clippy (on the Mac especially) knows to
 stay quiet only over the session's own window.
 
+You can have the same remote machine open in VS Code on several computers
+at once: each prompt goes to the computer whose VS Code window the session runs
+in.
+
 Check it: Command Palette → **Clippy Bridge: Status**. It should say
 *listening* and *installed, Clippy is running*; the **Clippy Bridge** output
 channel logs anything that goes wrong.

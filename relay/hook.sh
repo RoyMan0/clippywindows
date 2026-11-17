@@ -11,8 +11,34 @@
 # with no decision. Never fails the hook, never prints anything else.
 
 DIR="${CLIPPY_RELAY_DIR:-$HOME/.clippy-relay}"
-PORT="${CLIPPY_RELAY_PORT:-43118}"
 KEY=$(cat "$DIR/key" 2>/dev/null) || exit 0
+
+# Which VS Code window this session belongs to. Every window connected to this
+# machine (from any computer) registers its own port in $DIR/hosts/<pid of its
+# extension host>, and Claude Code runs as a child of that process — so the
+# first parent of ours with a file there is our window. Without one (a
+# `claude` started in an SSH terminal), the shared port.
+parent_of() {
+  if [ -r "/proc/$1/stat" ]; then
+    sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | cut -d' ' -f2
+  else
+    ps -o ppid= -p "$1" 2>/dev/null | tr -d ' '
+  fi
+}
+PORT="${CLIPPY_RELAY_PORT:-}"
+if [ -z "$PORT" ] && [ -d "$DIR/hosts" ]; then
+  p=$$
+  n=0
+  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$n" -lt 30 ]; do
+    if [ -r "$DIR/hosts/$p" ]; then
+      PORT=$(tr -dc '0-9' < "$DIR/hosts/$p")
+      break
+    fi
+    p=$(parent_of "$p")
+    n=$((n + 1))
+  done
+fi
+[ -n "$PORT" ] || PORT=43118
 
 URL="http://127.0.0.1:$PORT/hook/$1"
 MAX=3

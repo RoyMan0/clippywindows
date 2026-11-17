@@ -95,6 +95,25 @@ Electron app; **you** means confirmed by hand on a real Windows PC or Mac.
 - **Checked:** tests (the real `hook.sh` → both halves → Clippy's server);
   extensions loaded against a VS Code stand-in; you, over the tunnel.
 
+### With the NAS open in VS Code on two computers, one got every prompt
+- **Symptom:** a session in the Windows PC's VS Code window prompted on the
+  *Mac's* Clippy (which also had windows open on the NAS); Windows got nothing
+  until VS Code on the Mac was closed.
+- **Cause:** the remote half of the bridge listened on one shared port
+  (43118) on the NAS. Only one VS Code window can hold it, and whichever held
+  it — on whatever computer — received every NAS session's hooks.
+- **Fix:** every VS Code window connected to the NAS (remote extension 0.4.0)
+  also listens on a port of its own and registers it in
+  `~/.clippy-relay/hosts/<pid of its extension host>`. Claude Code runs as a
+  child of that process, so `hook.sh` walks up its parent processes to the
+  first registered one — the window, and the computer, the session belongs to.
+  Sessions not started from a VS Code window (a `claude` in an SSH terminal)
+  still use the shared port. Registrations of windows that have gone are
+  cleaned up.
+- **Files:** `vscode/clippy-bridge-remote/extension.js`, `relay/hook.sh`
+- **Checked:** tests (the real `hook.sh` finds its window's port among
+  others, falls back without one); the extension against a VS Code stand-in.
+
 ### The stats panel showed nothing for remote sessions
 - **Cause:** context used and the 5-hour/weekly allowance come from Claude
   Code's files (the transcript, `~/.claude.json`) on the machine it runs on —

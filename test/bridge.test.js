@@ -418,3 +418,44 @@ test('hook.sh in rewake mode exits 2 with the reply, and 0 when signed off', { s
     }
   );
 });
+
+/* ---------------- each window gets its own sessions ---------------- */
+
+test('hook.sh finds the VS Code window its session runs under, not the shared port', { skip: process.platform === 'win32' || !hasCurl }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-bridge-'));
+  fs.writeFileSync(path.join(dir, 'key'), `${KEY}\n`);
+  fs.mkdirSync(path.join(dir, 'hosts'));
+  const seen = [];
+  await withChain(
+    (event, kind, payload) => {
+      seen.push(payload.session_id);
+      return event === 'PermissionRequest'
+        ? { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } }
+        : undefined;
+    },
+    async ({ bridgePort }) => {
+      // This test process plays the extension host: the hook runs as its child.
+      fs.writeFileSync(path.join(dir, 'hosts', String(process.pid)), `${bridgePort}\n`);
+      // Another window's registration (some other process) must not be used.
+      fs.writeFileSync(path.join(dir, 'hosts', '999999'), '1\n');
+      const res = await runHook(dir, ['PermissionRequest?source=claude', 'hold'], '{"session_id":"mine"}', {
+        CLIPPY_RELAY_PORT: '',
+      });
+      assert.equal(res.code, 0);
+      assert.equal(JSON.parse(res.out).hookSpecificOutput.decision.behavior, 'allow');
+      assert.deepEqual(seen, ['mine']);
+    }
+  );
+});
+
+test('hook.sh with no window registration for its session uses the shared port', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clippy-bridge-'));
+  fs.writeFileSync(path.join(dir, 'key'), `${KEY}\n`);
+  fs.mkdirSync(path.join(dir, 'hosts'));
+  fs.writeFileSync(path.join(dir, 'hosts', '999999'), '1\n'); // not an ancestor
+  const started = Date.now();
+  const res = await runHook(dir, ['Stop?source=claude'], '{}', { CLIPPY_RELAY_PORT: '' });
+  assert.equal(res.code, 0);
+  assert.equal(res.out, '');
+  assert.ok(Date.now() - started < 4000, 'falls back to 43118 and passes quietly');
+});
